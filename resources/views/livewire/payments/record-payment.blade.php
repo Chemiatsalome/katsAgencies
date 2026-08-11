@@ -1,0 +1,58 @@
+<div class="bg-white shadow-sm rounded-lg border border-brand-border p-5">
+    <h3 class="text-sm font-semibold text-brand-slate mb-4">Record Rent Payment</h3>
+
+    @if ($outstandingCharges->isEmpty())
+        <p class="text-sm text-gray-400">No outstanding rent charges. Nothing to record against.</p>
+    @else
+        <form wire:submit="save" class="space-y-4">
+            <div>
+                <x-input-label for="rent_charge_id" value="For Month" />
+                <select id="rent_charge_id" wire:model="rent_charge_id" class="mt-1 block w-full rounded-md border-brand-border text-sm">
+                    <option value="">Select month…</option>
+                    @foreach ($outstandingCharges as $charge)
+                        <option value="{{ $charge->id }}">
+                            {{ \Carbon\Carbon::create()->month($charge->period_month)->format('F') }} {{ $charge->period_year }}
+                            — Balance KSh {{ number_format($charge->amount_expected - $charge->amount_paid, 2) }}
+                        </option>
+                    @endforeach
+                </select>
+                <x-input-error :messages="$errors->get('rent_charge_id')" class="mt-1" />
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <x-input-label for="amount" value="Amount (KSh)" />
+                    <x-text-input id="amount" type="number" step="0.01" wire:model="amount" class="mt-1 block w-full" />
+                    <x-input-error :messages="$errors->get('amount')" class="mt-1" />
+                </div>
+                <div>
+                    <x-input-label for="payment_date" value="Date" />
+                    <x-text-input id="payment_date" type="date" wire:model="payment_date" class="mt-1 block w-full" />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <x-input-label for="method" value="Method" />
+                    <select id="method" wire:model="method" class="mt-1 block w-full rounded-md border-brand-border text-sm">
+                        <option value="mpesa">M-Pesa</option>
+                        <option value="bank">Bank</option>
+                        <option value="cash">Cash</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div>
+                    <x-input-label for="reference_number" value="Reference No. (optional)" />
+                    <x-text-input id="reference_number" type="text" wire:model="reference_number" class="mt-1 block w-full" />
+                </div>
+            </div>
+
+            <div>
+                <x-input-label for="notes" value="Notes (optional)" />
+                <x-text-input id="notes" type="text" wire:model="notes" class="mt-1 block w-full" />
+            </div>
+
+            <x-primary-button type="submit">Record Payment</x-primary-button>
+        </form>
+    @endif
+</div>
