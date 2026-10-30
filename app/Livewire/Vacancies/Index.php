@@ -12,10 +12,8 @@ class Index extends Component
 {
     public function render()
     {
-        $landlordId = Auth::id();
-
         $houses = House::vacant()
-            ->whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlordId))
+            ->accessibleBy(Auth::user())
             ->with(['block.property', 'tenancies' => fn ($q) => $q->latest('move_out_date')->limit(1)])
             ->get()
             ->map(function (House $house) {

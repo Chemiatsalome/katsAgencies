@@ -3,6 +3,7 @@
 namespace App\Livewire\Properties;
 
 use App\Models\Property;
+use App\Models\Tenancy;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -20,6 +21,17 @@ class Index extends Component
     public function delete(Property $property): void
     {
         $this->authorize('delete', $property);
+
+        $hasActiveTenancy = Tenancy::whereIn('status', Tenancy::OCCUPYING_STATUSES)
+            ->whereHas('house.block', fn ($q) => $q->where('property_id', $property->id))
+            ->exists();
+
+        if ($hasActiveTenancy) {
+            session()->flash('status', 'This property has units with active tenancies — end those tenancies before deleting it.');
+
+            return;
+        }
+
         $property->delete();
     }
 
@@ -29,11 +41,8 @@ class Index extends Component
 
         $query = Property::withCount('blocks')
             ->with('houses')
-            ->latest();
-
-        if (! $user->hasRole('admin')) {
-            $query->forLandlord($user->id);
-        }
+            ->latest()
+            ->accessibleBy($user);
 
         return view('livewire.properties.index', [
             'properties' => $query->paginate($this->perPage),

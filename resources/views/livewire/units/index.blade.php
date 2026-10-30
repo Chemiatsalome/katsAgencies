@@ -32,9 +32,6 @@
                     <option value="vacant">Vacant</option>
                     <option value="occupied">Occupied</option>
                     <option value="reserved">Reserved</option>
-                    <option value="pending_approval">Pending Approval</option>
-                    <option value="under_maintenance">Under Maintenance</option>
-                    <option value="unavailable">Unavailable</option>
                 </select>
             </div>
 
@@ -69,6 +66,8 @@
                                             <a href="{{ route('manage.tenancies.show', $house->currentTenancy) }}" wire:navigate class="text-teal hover:underline">
                                                 {{ $house->currentTenancy->tenant->name }}
                                             </a>
+                                        @elseif ($house->status === 'vacant')
+                                            <a href="{{ route('manage.tenancies.create', ['house_id' => $house->id]) }}" wire:navigate class="text-gray-400 hover:text-brand-slate">+ Move in tenant</a>
                                         @else
                                             —
                                         @endif

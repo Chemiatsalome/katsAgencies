@@ -9,26 +9,32 @@ class ApplicationPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, Application $application): bool
     {
-        return $application->property->landlord_id === $user->id;
+        return Application::accessibleBy($user)->whereKey($application->id)->exists();
     }
 
     public function create(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasManagerPermission('applications.review');
     }
 
     public function update(User $user, Application $application): bool
     {
-        return $application->property->landlord_id === $user->id;
+        if (! Application::accessibleBy($user)->whereKey($application->id)->exists()) {
+            return false;
+        }
+
+        return $user->hasRole('landlord')
+            || $user->hasManagerPermission('applications.review')
+            || $user->hasManagerPermission('applications.approve');
     }
 
     public function delete(User $user, Application $application): bool
     {
-        return $application->property->landlord_id === $user->id;
+        return $user->hasRole('landlord') && Application::accessibleBy($user)->whereKey($application->id)->exists();
     }
 }

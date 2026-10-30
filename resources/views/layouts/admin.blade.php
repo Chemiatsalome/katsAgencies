@@ -7,6 +7,10 @@
 
         <title>{{ config('app.name', 'Kats Agencies') }}</title>
 
+        <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+        <link rel="icon" type="image/png" href="{{ asset('favicon.png') }}">
+        <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
+
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600,700&display=swap" rel="stylesheet" />
 
@@ -19,8 +23,8 @@
             <!-- Mobile sidebar overlay -->
             <div x-show="mobileNavOpen" x-cloak class="fixed inset-0 z-40 lg:hidden">
                 <div class="absolute inset-0 bg-charcoal/50" @click="mobileNavOpen = false"></div>
-                <div class="relative w-64 h-full bg-navy text-white overflow-y-auto" x-data="{ collapsed: false }">
-                    @include('layouts.partials.sidebar')
+                <div class="relative w-64 h-full bg-navy text-white overflow-y-auto">
+                    @include('layouts.partials.sidebar', ['mobile' => true])
                 </div>
             </div>
 
@@ -39,7 +43,11 @@
                     </div>
 
                     <div class="flex items-center gap-2">
-                        <livewire:admin.notification-bell />
+                        @if (auth()->user()->hasRole('admin'))
+                            <livewire:admin.notification-bell />
+                        @else
+                            <livewire:notification-bell />
+                        @endif
 
                         <x-dropdown align="right" width="48">
                             <x-slot name="trigger">
@@ -60,8 +68,45 @@
                 </header>
 
                 @if (isset($header))
+                    @php
+                        // A page can override where "Back" goes (e.g. after
+                        // creating a record, so Back lands on the listing
+                        // instead of re-opening the now-stale create form)
+                        // by pushing a URL onto this stack:
+                        // @push('header-back-url'){{ route(...) }}@endpush
+                        // Left empty, the default below falls back to real
+                        // browser history, which is what every other page
+                        // still gets.
+                        $headerBackUrl = trim($__env->yieldPushContent('header-back-url'));
+                    @endphp
                     <div class="bg-white border-b border-brand-border px-4 lg:px-6 py-5">
-                        {{ $header }}
+                        <div class="flex items-center gap-3">
+                            @if ($headerBackUrl)
+                                <a
+                                    href="{{ $headerBackUrl }}"
+                                    wire:navigate
+                                    class="shrink-0 p-1.5 rounded-md text-brand-slate hover:text-navy hover:bg-offwhite"
+                                    title="Back"
+                                >
+                                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </a>
+                            @else
+                                <button
+                                    onclick="window.history.length > 1 ? window.history.back() : (window.location.href = '{{ route('dashboard') }}')"
+                                    class="shrink-0 p-1.5 rounded-md text-brand-slate hover:text-navy hover:bg-offwhite"
+                                    title="Back"
+                                >
+                                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                            @endif
+                            <div class="flex-1 min-w-0">
+                                {{ $header }}
+                            </div>
+                        </div>
                     </div>
                 @endif
 

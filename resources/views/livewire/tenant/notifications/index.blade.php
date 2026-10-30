@@ -1,15 +1,19 @@
     <div>
         <x-slot name="header">
-            <div class="flex items-center justify-between">
-                <h2 class="font-semibold text-xl text-charcoal leading-tight">Notifications</h2>
-                @if ($unreadCount > 0)
-                    <button wire:click="markAllRead" class="text-sm text-teal hover:underline">Mark all as read</button>
-                @endif
-            </div>
+            <h2 class="font-semibold text-xl text-charcoal leading-tight">Notifications</h2>
         </x-slot>
 
         <div class="py-8">
             <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+
+                {{-- Not in the header slot above — Livewire's reactive wire:id
+                     boundary only wraps the layout's main $slot, not $header, so a
+                     wire:click placed there silently never fires. --}}
+                @if ($unreadCount > 0)
+                    <div class="flex justify-end">
+                        <button wire:click="markAllRead" class="text-sm text-teal hover:underline">Mark all as read</button>
+                    </div>
+                @endif
 
                 <div class="flex items-center gap-2">
                     <button wire:click="$set('filter', 'all')" class="px-3 py-1.5 rounded-md text-sm {{ $filter === 'all' ? 'bg-navy text-white' : 'bg-white border border-brand-border text-brand-slate' }}">All</button>
@@ -19,12 +23,18 @@
 
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border divide-y divide-gray-100">
                     @forelse ($notifications as $notification)
+                        @php $actionUrl = $notification->actionUrl(); @endphp
                         <div wire:key="notification-{{ $notification->id }}" class="px-5 py-4 {{ ! $notification->read_at ? 'bg-offwhite' : '' }}">
                             <div class="flex items-start justify-between gap-3">
                                 <div>
                                     <p class="text-sm font-medium text-charcoal">{{ $notification->title }}</p>
                                     <p class="text-sm text-brand-slate mt-0.5">{{ $notification->body }}</p>
-                                    <p class="text-[11px] text-brand-slate mt-1">{{ $notification->created_at->format('d M Y, H:i') }}</p>
+                                    <div class="flex items-center gap-3 mt-1">
+                                        <p class="text-[11px] text-brand-slate">{{ $notification->created_at->format('d M Y, H:i') }}</p>
+                                        @if ($actionUrl)
+                                            <a href="{{ $actionUrl }}" wire:navigate class="text-xs text-teal hover:underline">View →</a>
+                                        @endif
+                                    </div>
                                 </div>
                                 @if (! $notification->read_at)
                                     <button wire:click="markRead({{ $notification->id }})" class="shrink-0 text-xs text-teal hover:underline">Mark read</button>

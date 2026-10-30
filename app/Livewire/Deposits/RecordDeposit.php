@@ -2,8 +2,8 @@
 
 namespace App\Livewire\Deposits;
 
-use App\Models\DepositPayment;
 use App\Models\Tenancy;
+use App\Services\DepositService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 
@@ -39,15 +39,15 @@ class RecordDeposit extends Component
             'notes' => ['nullable', 'string'],
         ]);
 
-        DepositPayment::create([
-            'tenancy_id' => $this->tenancy->id,
-            'amount' => $this->amount,
-            'payment_date' => $this->payment_date,
-            'method' => $this->method,
-            'reference_number' => $this->reference_number ?: null,
-            'recorded_by' => Auth::id(),
-            'notes' => $this->notes ?: null,
-        ]);
+        app(DepositService::class)->recordPayment(
+            $this->tenancy,
+            (float) $this->amount,
+            $this->payment_date,
+            $this->method,
+            $this->reference_number ?: null,
+            $this->notes ?: null,
+            Auth::id(),
+        );
 
         $this->reset(['amount', 'reference_number', 'notes']);
         $this->payment_date = now()->format('Y-m-d');

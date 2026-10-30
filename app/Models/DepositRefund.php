@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 
-#[Fillable(['tenancy_id', 'amount', 'deductions', 'deduction_reason', 'refund_date', 'recorded_by'])]
+#[Fillable(['tenancy_id', 'amount', 'refund_date', 'notes', 'recorded_by'])]
 class DepositRefund extends Model
 {
     use LogsActivity;
@@ -18,7 +18,6 @@ class DepositRefund extends Model
         return [
             'refund_date' => 'date',
             'amount' => 'decimal:2',
-            'deductions' => 'decimal:2',
         ];
     }
 

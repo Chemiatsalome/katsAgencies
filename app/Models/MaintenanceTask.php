@@ -11,9 +11,9 @@ use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 
 #[Fillable([
-    'property_id', 'block_id', 'house_id', 'complaint_id', 'maintenance_schedule_id', 'vendor_id',
+    'property_id', 'block_id', 'house_id', 'tenancy_id', 'complaint_id', 'maintenance_schedule_id', 'vendor_id',
     'title', 'category', 'description', 'priority', 'status', 'scheduled_date', 'scheduled_time',
-    'estimated_cost', 'actual_cost', 'expense_id', 'completed_at', 'created_by',
+    'estimated_cost', 'actual_cost', 'expense_id', 'deposit_deduction_id', 'completed_at', 'created_by',
 ])]
 class MaintenanceTask extends Model
 {
@@ -52,6 +52,20 @@ class MaintenanceTask extends Model
         return $this->belongsTo(Complaint::class);
     }
 
+    /**
+     * §8 (design approved 2026-10-25): nullable — copied forward from
+     * Complaint::tenancy_id when this task is created from a complaint
+     * (Maintenance\Index::convertToTask()). NULL when a landlord logs a
+     * task directly (createTask()), which has no tenant involved at all —
+     * never guessed from house_id/created_at either way. An occurrence/
+     * association fact only, never on its own grounds for tenant
+     * liability (see TenantLiabilityDecisionService, §7).
+     */
+    public function tenancy(): BelongsTo
+    {
+        return $this->belongsTo(Tenancy::class);
+    }
+
     public function schedule(): BelongsTo
     {
         return $this->belongsTo(MaintenanceSchedule::class, 'maintenance_schedule_id');
@@ -65,6 +79,11 @@ class MaintenanceTask extends Model
     public function expense(): BelongsTo
     {
         return $this->belongsTo(Expense::class);
+    }
+
+    public function depositDeduction(): BelongsTo
+    {
+        return $this->belongsTo(DepositDeduction::class);
     }
 
     public function createdBy(): BelongsTo
@@ -85,6 +104,11 @@ class MaintenanceTask extends Model
     public function scopeScheduledOn(Builder $query, string $date): Builder
     {
         return $query->whereDate('scheduled_date', $date);
+    }
+
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->whereHas('property', fn (Builder $q) => $q->accessibleBy($user));
     }
 
     public function getActivitylogOptions(): LogOptions

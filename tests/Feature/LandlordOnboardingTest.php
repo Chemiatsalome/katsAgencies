@@ -21,9 +21,12 @@ class LandlordOnboardingTest extends TestCase
         $component = Volt::test('pages.auth.register')
             ->set('name', 'New Landlord')
             ->set('email', 'newlandlord@example.test')
+            ->set('phone', '0712345678')
+            ->set('national_id', '12345678')
+            ->set('property_location', 'Nyali, Mombasa')
+            ->set('intended_unit_count', '5')
             ->set('password', 'password123')
-            ->set('password_confirmation', 'password123')
-            ->set('register_as_landlord', true);
+            ->set('password_confirmation', 'password123');
 
         $component->call('register')->assertRedirect(route('pending-approval', absolute: false));
 

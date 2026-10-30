@@ -6,6 +6,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 
@@ -74,7 +75,7 @@ class Form extends Component
         if (! $this->tenant->user_id && $this->portal_email) {
             $this->validate([
                 'portal_email' => ['required', 'email', Rule::unique('users', 'email')],
-                'portal_password' => ['required', 'string', 'min:8'],
+                'portal_password' => ['required', 'string', Password::defaults()],
             ]);
 
             $user = User::create([

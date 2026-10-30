@@ -75,6 +75,11 @@ class TenantInvitation extends Model
         return $query->whereIn('status', ['pending', 'opened'])->where('expires_at', '>', now());
     }
 
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->whereHas('house', fn (Builder $q) => $q->accessibleBy($user));
+    }
+
     public static function generateToken(): string
     {
         return Str::random(48);

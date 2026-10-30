@@ -12,6 +12,10 @@
         </x-slot>
 
         <div class="p-6 space-y-6 max-w-2xl">
+            @if (session('status'))
+                <div class="bg-green-50 border border-green-200 text-green-800 text-sm rounded-md px-4 py-2">{{ session('status') }}</div>
+            @endif
+
             <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 grid grid-cols-2 gap-4 text-sm">
                 <div>
                     <p class="text-brand-slate">Phone</p>
@@ -42,8 +46,12 @@
             @can('update', $application)
                 @if (! in_array($application->status, ['approved', 'rejected', 'withdrawn']))
                     <div class="flex flex-wrap gap-2">
-                        <button wire:click="updateStatus('under_review')" class="px-3 py-1.5 text-sm rounded-md border border-brand-border text-charcoal hover:bg-offwhite">Mark Under Review</button>
-                        <button wire:click="updateStatus('more_info_required')" class="px-3 py-1.5 text-sm rounded-md border border-brand-border text-charcoal hover:bg-offwhite">Request More Info</button>
+                        @if ($application->status !== 'under_review')
+                            <button wire:click="updateStatus('under_review')" class="px-3 py-1.5 text-sm rounded-md border border-brand-border text-charcoal hover:bg-offwhite">Mark Under Review</button>
+                        @endif
+                        @if ($application->status !== 'more_info_required')
+                            <button wire:click="updateStatus('more_info_required')" class="px-3 py-1.5 text-sm rounded-md border border-brand-border text-charcoal hover:bg-offwhite">Request More Info</button>
+                        @endif
                         <button wire:click="$toggle('showApproveForm')" class="px-3 py-1.5 text-sm rounded-md bg-navy text-white hover:bg-navy-dark">Approve &amp; Convert to Tenancy</button>
                         <button wire:click="updateStatus('rejected')" wire:confirm="Reject this application?" class="px-3 py-1.5 text-sm rounded-md border border-red-200 text-danger">Reject</button>
                     </div>

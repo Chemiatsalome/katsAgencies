@@ -79,7 +79,7 @@
                                         <td class="px-5 py-3 text-brand-slate">{{ \Carbon\Carbon::create()->month($charge->period_month)->format('M') }} {{ $charge->period_year }}</td>
                                         <td class="px-5 py-3 text-right text-brand-slate">KSh {{ number_format($charge->amount_expected, 2) }}</td>
                                         <td class="px-5 py-3">
-                                            <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">🟡 {{ $sourceLabel }}</span>
+                                            <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700">{{ $sourceLabel }}</span>
                                         </td>
                                         <td class="px-5 py-3 text-right">
                                             @can('update', $charge->tenancy)

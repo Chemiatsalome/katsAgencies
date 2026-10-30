@@ -49,6 +49,15 @@ class Dashboard extends Component
         // Genuinely outstanding — a charge settled via opening_balance already
         // carries status "paid" and is correctly excluded here, independent
         // of which payment source funded it.
+        //
+        // Deliberately NOT netted against Tenancy::advanceCreditAvailable()
+        // (see PropertyFinanceService::outstanding(), the all-time "what's
+        // owed right now" figure used elsewhere) — this is THIS calendar
+        // month's own shortfall specifically, for a single-period platform
+        // snapshot. A surplus sitting on a different month's charge is a
+        // different concept from "how much of this month's billing is
+        // uncollected," the same reasoning Admin\Platform\Overview's
+        // monthlyTotals() documents for the identical period-specific figure.
         $outstandingThisMonth = $thisMonth
             ->filter(fn (RentCharge $c) => in_array($c->status, ['unpaid', 'partial', 'overdue'], true) && $c->due_date->lte(now()))
             ->sum(fn (RentCharge $c) => (float) $c->amount_expected - (float) $c->amount_paid);
@@ -59,7 +68,7 @@ class Dashboard extends Component
         return view('livewire.admin.dashboard', [
             'totalLandlords' => User::role('landlord')->count(),
             'activeLandlords' => User::role('landlord')->where('status', 'active')->count(),
-            'pendingApplications' => User::role('landlord')->where('status', 'inactive')->count(),
+            'pendingApplications' => User::role('landlord')->where('status', 'inactive')->whereNull('approved_at')->count(),
             'suspendedLandlords' => User::role('landlord')->where('status', 'suspended')->count(),
 
             'totalProperties' => Property::count(),

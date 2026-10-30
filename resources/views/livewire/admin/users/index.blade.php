@@ -4,6 +4,12 @@
         </x-slot>
 
         <div class="p-6 space-y-4">
+            @if (session('status'))
+                <div class="bg-teal/10 border border-teal/30 text-charcoal text-sm rounded-md px-4 py-3">
+                    {{ session('status') }}
+                </div>
+            @endif
+
             @if ($generatedPassword)
                 <div class="bg-warning/10 border border-warning/30 text-charcoal text-sm rounded-md px-4 py-3 flex items-center justify-between">
                     <span>New temporary password for this user: <strong class="font-mono">{{ $generatedPassword }}</strong> — share it securely, it won't be shown again.</span>
@@ -39,14 +45,14 @@
                                     <td class="px-5 py-3 font-medium text-charcoal">{{ $user->name }}</td>
                                     <td class="px-5 py-3 text-brand-slate">{{ $user->email }}</td>
                                     <td class="px-5 py-3">
-                                        <select wire:change="updateRole({{ $user->id }}, $event.target.value)" class="rounded-md border-brand-border text-xs py-1">
+                                        <select wire:change="updateRole({{ $user->id }}, $event.target.value)" wire:confirm="Change {{ $user->name }}'s role? This takes effect immediately." class="rounded-md border-brand-border text-xs py-1">
                                             @foreach (['admin', 'landlord', 'tenant'] as $role)
                                                 <option value="{{ $role }}" @selected($user->hasRole($role))>{{ ucfirst($role) }}</option>
                                             @endforeach
                                         </select>
                                     </td>
                                     <td class="px-5 py-3">
-                                        <select wire:change="updateStatus({{ $user->id }}, $event.target.value)" class="rounded-md border-brand-border text-xs py-1">
+                                        <select wire:change="updateStatus({{ $user->id }}, $event.target.value)" wire:confirm="Change {{ $user->name }}'s status? This takes effect immediately." class="rounded-md border-brand-border text-xs py-1">
                                             @foreach (['active', 'inactive', 'suspended'] as $status)
                                                 <option value="{{ $status }}" @selected($user->status === $status)>{{ ucfirst($status) }}</option>
                                             @endforeach

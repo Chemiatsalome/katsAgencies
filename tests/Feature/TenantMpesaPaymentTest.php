@@ -7,6 +7,7 @@ use App\Models\AppNotification;
 use App\Models\MpesaTransaction;
 use App\Models\Payment;
 use App\Models\RentCharge;
+use App\Models\Setting;
 use App\Models\Tenancy;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -17,6 +18,20 @@ use Tests\TestCase;
 class TenantMpesaPaymentTest extends TestCase
 {
     use RefreshDatabase;
+
+    private const CALLBACK_TOKEN = 'test-callback-secret';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.mpesa.callback_secret' => self::CALLBACK_TOKEN]);
+    }
+
+    private function callbackUrl(): string
+    {
+        return route('mpesa.callback', ['token' => self::CALLBACK_TOKEN]);
+    }
 
     private function makeTenantUser(): User
     {
@@ -32,7 +47,13 @@ class TenantMpesaPaymentTest extends TestCase
 
     public function test_tenant_can_initiate_an_stk_push_and_it_records_a_pending_transaction(): void
     {
-        config(['services.mpesa.consumer_key' => 'test-key', 'services.mpesa.consumer_secret' => 'test-secret', 'services.mpesa.callback_url' => 'https://example.test/mpesa/callback']);
+        config([
+            'services.mpesa.consumer_key' => 'test-key',
+            'services.mpesa.consumer_secret' => 'test-secret',
+            'services.mpesa.shortcode' => '174379',
+            'services.mpesa.passkey' => 'test-passkey',
+            'services.mpesa.callback_url' => 'https://example.test/mpesa/callback',
+        ]);
 
         Http::fake([
             '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
@@ -122,7 +143,7 @@ class TenantMpesaPaymentTest extends TestCase
             ],
         ];
 
-        $response = $this->postJson(route('mpesa.callback'), $callbackPayload);
+        $response = $this->postJson($this->callbackUrl(), $callbackPayload);
         $response->assertOk();
         $response->assertJson(['ResultCode' => 0]);
 
@@ -169,7 +190,7 @@ class TenantMpesaPaymentTest extends TestCase
             'status' => 'pending',
         ]);
 
-        $response = $this->postJson(route('mpesa.callback'), [
+        $response = $this->postJson($this->callbackUrl(), [
             'Body' => [
                 'stkCallback' => [
                     'MerchantRequestID' => 'merchant-2',
@@ -273,7 +294,7 @@ class TenantMpesaPaymentTest extends TestCase
             'status' => 'pending',
         ]);
 
-        $response = $this->postJson(route('mpesa.callback'), [
+        $response = $this->postJson($this->callbackUrl(), [
             'Body' => [
                 'stkCallback' => [
                     'CheckoutRequestID' => 'checkout-split-1',
@@ -321,10 +342,265 @@ class TenantMpesaPaymentTest extends TestCase
         ]);
 
         // A plain POST with no _token / X-CSRF-TOKEN must still succeed.
-        $response = $this->post(route('mpesa.callback'), [
+        $response = $this->post($this->callbackUrl(), [
             'Body' => ['stkCallback' => ['CheckoutRequestID' => 'checkout-csrf-check', 'ResultCode' => 1, 'ResultDesc' => 'Failed']],
         ]);
 
         $response->assertOk();
+    }
+
+    public function test_a_callback_with_the_wrong_token_is_rejected_and_never_processed(): void
+    {
+        $this->seed();
+        $tenancy = Tenancy::active()->firstOrFail();
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => User::factory()->create()->id,
+            'phone' => '254712345678',
+            'amount' => 1000,
+            'checkout_request_id' => 'checkout-bad-token',
+            'status' => 'pending',
+        ]);
+
+        $response = $this->postJson(route('mpesa.callback', ['token' => 'not-the-real-secret']), [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'checkout-bad-token',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'Success',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            ['Name' => 'Amount', 'Value' => 1000],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'FORGED01'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertForbidden();
+
+        $transaction->refresh();
+        $this->assertEquals('pending', $transaction->status);
+        $this->assertDatabaseMissing('payments', ['reference_number' => 'FORGED01']);
+    }
+
+    /**
+     * Regression test for a bug where MpesaCallbackController checked the
+     * incoming token against config('services.mpesa.callback_secret') (the
+     * static .env value) while PaymentGatewayService::callbackUrl() embeds
+     * whatever an admin saved live via Admin > Settings > Payments
+     * (Setting::setEncrypted) — the two were never the same value unless an
+     * admin happened to also copy their generated secret into .env, so
+     * every real callback for a secret rotated/entered through the UI was
+     * rejected as "incorrect callback token".
+     */
+    public function test_a_callback_secret_saved_via_admin_settings_is_honored_over_the_env_value(): void
+    {
+        $this->seed();
+        $tenancy = Tenancy::active()->firstOrFail();
+
+        // Simulates an admin saving a callback secret live via Admin >
+        // Settings > Payments — distinct from whatever setUp() put in
+        // config('services.mpesa.callback_secret') above, standing in for
+        // .env's MPESA_CALLBACK_SECRET.
+        Setting::setEncrypted('mpesa_callback_secret', 'admin-saved-secret');
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => User::factory()->create()->id,
+            'phone' => '254712345678',
+            'amount' => 1000,
+            'checkout_request_id' => 'checkout-admin-secret-1',
+            'status' => 'pending',
+        ]);
+
+        $callback = fn (string $token) => $this->postJson(route('mpesa.callback', ['token' => $token]), [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'checkout-admin-secret-1',
+                    'ResultCode' => 1032,
+                    'ResultDesc' => 'Request cancelled by user',
+                ],
+            ],
+        ]);
+
+        // The old .env-backed value must no longer be accepted on its own.
+        $callback(self::CALLBACK_TOKEN)->assertForbidden();
+        $this->assertEquals('pending', $transaction->fresh()->status);
+
+        // The one actually saved via the admin UI must be.
+        $callback('admin-saved-secret')->assertOk();
+        $this->assertEquals('cancelled', $transaction->fresh()->status);
+    }
+
+    public function test_a_duplicate_callback_for_an_already_finished_transaction_does_not_double_credit(): void
+    {
+        $this->seed();
+
+        $tenancy = Tenancy::active()->with('house.block.property', 'tenant')->firstOrFail();
+        $tenantUser = User::factory()->create();
+        $tenantUser->syncRoles(['tenant']);
+        $tenancy->tenant->update(['user_id' => $tenantUser->id]);
+
+        MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => $tenantUser->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'checkout_request_id' => 'checkout-dup-1',
+            'status' => 'pending',
+        ]);
+
+        $callbackPayload = [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'checkout-dup-1',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'Success',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            ['Name' => 'Amount', 'Value' => 5000],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'DUP0001'],
+                            ['Name' => 'TransactionDate', 'Value' => 20260810143000],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $this->postJson($this->callbackUrl(), $callbackPayload)->assertOk();
+        // Safaricom retrying, or the same callback arriving twice, must never
+        // be allowed to credit the tenant a second time.
+        $this->postJson($this->callbackUrl(), $callbackPayload)->assertOk();
+
+        $this->assertEquals(1, Payment::where('reference_number', 'DUP0001')->count());
+    }
+
+    public function test_a_callback_amount_mismatch_is_rejected_and_not_credited(): void
+    {
+        $this->seed();
+        $tenancy = Tenancy::active()->firstOrFail();
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => User::factory()->create()->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'checkout_request_id' => 'checkout-mismatch-1',
+            'status' => 'pending',
+        ]);
+
+        $response = $this->postJson($this->callbackUrl(), [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'checkout-mismatch-1',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'Success',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            // Claims a far larger amount than the 5,000 this transaction
+                            // actually requested — a forged or corrupted payload.
+                            ['Name' => 'Amount', 'Value' => 999999],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'MISMATCH1'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $response->assertOk();
+
+        $transaction->refresh();
+        $this->assertEquals('failed', $transaction->status);
+        $this->assertNull($transaction->payment_id);
+        $this->assertDatabaseMissing('payments', ['reference_number' => 'MISMATCH1']);
+    }
+
+    public function test_a_callback_whose_receipt_was_already_recorded_manually_is_not_credited_again(): void
+    {
+        $this->seed();
+        $tenancy = Tenancy::active()->with('house.block.property', 'tenant')->firstOrFail();
+        $landlord = $tenancy->house->block->property->landlord;
+
+        $charge = RentCharge::create([
+            'tenancy_id' => $tenancy->id,
+            'period_year' => now()->year,
+            'period_month' => now()->month,
+            'due_date' => now(),
+            'amount_expected' => 5000,
+            'amount_paid' => 0,
+            'status' => 'unpaid',
+        ]);
+
+        // A manager already typed this exact receipt in by hand before the
+        // callback arrived (e.g. reading it off the tenant's SMS).
+        Payment::create([
+            'tenancy_id' => $tenancy->id, 'rent_charge_id' => $charge->id,
+            'amount' => 5000, 'payment_date' => now()->format('Y-m-d'), 'method' => 'mpesa',
+            'reference_number' => 'MANUAL001', 'recorded_by' => $landlord->id,
+        ]);
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => User::factory()->create()->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'checkout_request_id' => 'checkout-already-manual-1',
+            'status' => 'pending',
+        ]);
+
+        $this->postJson($this->callbackUrl(), [
+            'Body' => [
+                'stkCallback' => [
+                    'CheckoutRequestID' => 'checkout-already-manual-1',
+                    'ResultCode' => 0,
+                    'ResultDesc' => 'Success',
+                    'CallbackMetadata' => [
+                        'Item' => [
+                            ['Name' => 'Amount', 'Value' => 5000],
+                            ['Name' => 'MpesaReceiptNumber', 'Value' => 'MANUAL001'],
+                        ],
+                    ],
+                ],
+            ],
+        ])->assertOk();
+
+        $this->assertEquals(1, Payment::where('reference_number', 'MANUAL001')->count());
+        $this->assertEquals('failed', $transaction->fresh()->status);
+    }
+
+    public function test_recording_a_payment_with_an_already_used_mpesa_reference_number_is_rejected(): void
+    {
+        $this->seed();
+        $tenancy = Tenancy::active()->with('house.block.property')->firstOrFail();
+        $landlord = $tenancy->house->block->property->landlord;
+
+        $charge = RentCharge::create([
+            'tenancy_id' => $tenancy->id,
+            'period_year' => now()->year,
+            'period_month' => now()->month,
+            'due_date' => now(),
+            'amount_expected' => 5000,
+            'amount_paid' => 0,
+            'status' => 'unpaid',
+        ]);
+
+        Payment::create([
+            'tenancy_id' => $tenancy->id, 'rent_charge_id' => $charge->id,
+            'amount' => 5000, 'payment_date' => now()->format('Y-m-d'), 'method' => 'mpesa',
+            'reference_number' => 'TAKEN001', 'recorded_by' => $landlord->id,
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(\App\Livewire\Payments\RecordPayment::class, ['tenancy' => $tenancy])
+            ->set('amount', '5000')
+            ->set('method', 'mpesa')
+            ->set('reference_number', 'TAKEN001')
+            ->call('save')
+            ->assertHasErrors('reference_number');
+
+        $this->assertEquals(1, Payment::where('reference_number', 'TAKEN001')->count());
     }
 }

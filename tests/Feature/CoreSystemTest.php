@@ -123,11 +123,15 @@ class CoreSystemTest extends TestCase
         $balance = (float) $charge->amount_expected - (float) $charge->amount_paid;
         $this->assertGreaterThan(0, $balance);
 
+        // RecordPayment now allocates oldest-outstanding-first rather than a
+        // picked rent_charge_id — keep this the only outstanding charge on
+        // the tenancy so the amounts below land on it unambiguously.
+        RentCharge::where('tenancy_id', $tenancy->id)->where('id', '!=', $charge->id)->where('status', '!=', 'paid')->delete();
+
         $landlord = User::role('landlord')->firstOrFail();
 
         Livewire::actingAs($landlord)
             ->test(RecordPayment::class, ['tenancy' => $tenancy])
-            ->set('rent_charge_id', $charge->id)
             ->set('amount', 5000)
             ->set('payment_date', now()->format('Y-m-d'))
             ->set('method', 'mpesa')
@@ -142,7 +146,6 @@ class CoreSystemTest extends TestCase
 
         Livewire::actingAs($landlord)
             ->test(RecordPayment::class, ['tenancy' => $tenancy])
-            ->set('rent_charge_id', $charge->id)
             ->set('amount', $remaining)
             ->set('payment_date', now()->format('Y-m-d'))
             ->set('method', 'mpesa')
@@ -179,7 +182,12 @@ class CoreSystemTest extends TestCase
 
         Livewire::actingAs($landlord)
             ->test(Show::class, ['tenancy' => $tenancy])
-            ->call('moveOut');
+            // The current period's rent charge now exists as soon as this
+            // page is viewed (see Tenancies\Show::mount()), so this seeded
+            // tenancy genuinely owes the current month's rent.
+            ->set('acknowledgeUnpaidBalance', true)
+            ->call('reviewTermination')
+            ->call('confirmTermination');
 
         $tenancy->refresh();
         $this->assertEquals('completed', $tenancy->status);

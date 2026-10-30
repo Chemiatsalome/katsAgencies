@@ -4,7 +4,13 @@
         </x-slot>
 
         <div class="py-8">
-            <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+                @if (! $house)
+                    <div class="text-sm bg-teal/10 border border-teal/30 text-charcoal rounded-md px-4 py-2">
+                        Adding many units at once? <a href="{{ route('manage.properties.import') }}" wire:navigate class="text-teal font-medium hover:underline">Import them from a CSV instead →</a>
+                    </div>
+                @endif
+
                 <form wire:submit="save" class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
                     <div class="grid grid-cols-2 gap-4">
                         <div>
@@ -15,12 +21,19 @@
 
                         <div>
                             <x-input-label for="type" value="Type" />
-                            <select id="type" wire:model="type" class="mt-1 block w-full rounded-md border-brand-border">
+                            <select id="type" wire:model.live="type" class="mt-1 block w-full rounded-md border-brand-border">
                                 <option value="bedsitter">Bedsitter</option>
+                                <option value="studio">Studio</option>
+                                <option value="sq">SQ</option>
                                 <option value="one_bedroom">One Bedroom</option>
                                 <option value="two_bedroom">Two Bedroom</option>
-                                <option value="main_house">Main House</option>
-                                <option value="sq">SQ</option>
+                                <option value="three_bedroom">Three Bedroom</option>
+                                <option value="four_bedroom">Four Bedroom</option>
+                                <option value="house">House</option>
+                                <option value="villa">Villa</option>
+                                <option value="maisonette">Maisonette</option>
+                                <option value="shop">Shop</option>
+                                <option value="office">Office</option>
                                 <option value="other">Other</option>
                             </select>
                             <x-input-error :messages="$errors->get('type')" class="mt-1" />
@@ -59,19 +72,30 @@
                         </div>
                     </div>
 
+                    @php $impliedBedrooms = \App\Models\House::bedroomsImpliedByType($type); @endphp
                     <div>
                         <x-input-label for="bedrooms" value="Bedrooms (optional)" />
-                        <x-text-input id="bedrooms" type="number" wire:model="bedrooms" class="mt-1 block w-full" />
+                        <x-text-input id="bedrooms" type="number" wire:model="bedrooms" class="mt-1 block w-full" :disabled="$impliedBedrooms !== null" />
+                        @if ($impliedBedrooms !== null)
+                            <p class="mt-1 text-xs text-brand-slate">Set automatically from the unit type above.</p>
+                        @endif
                         <x-input-error :messages="$errors->get('bedrooms')" class="mt-1" />
                     </div>
 
                     <div>
                         <x-input-label for="status" value="Status" />
-                        <select id="status" wire:model="status" class="mt-1 block w-full rounded-md border-brand-border">
-                            <option value="vacant">Vacant</option>
-                            <option value="occupied">Occupied</option>
-                        </select>
-                        <p class="mt-1 text-xs text-gray-400">Automatically kept in sync when a tenancy starts or ends.</p>
+                        @if ($house && ! in_array($house->status, ['vacant', 'occupied']))
+                            <div class="mt-1 px-3 py-2 rounded-md bg-gray-50 border border-brand-border text-sm text-charcoal">
+                                {{ ucfirst(str_replace('_', ' ', $status)) }}
+                            </div>
+                            <p class="mt-1 text-xs text-gray-400">Managed automatically by the tenancy/invitation workflow — can't be edited here.</p>
+                        @else
+                            <select id="status" wire:model="status" class="mt-1 block w-full rounded-md border-brand-border">
+                                <option value="vacant">Vacant</option>
+                                <option value="occupied">Occupied</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-400">Automatically kept in sync when a tenancy starts or ends.</p>
+                        @endif
                     </div>
 
                     <div>

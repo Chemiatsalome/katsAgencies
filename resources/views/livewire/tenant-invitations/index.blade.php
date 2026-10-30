@@ -2,7 +2,7 @@
         <x-slot name="header">
             <div class="flex items-center justify-between">
                 <h2 class="font-semibold text-xl text-charcoal leading-tight">Tenant Invitations</h2>
-                <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
                     + Invite Tenant
                 </a>
             </div>

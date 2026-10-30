@@ -60,6 +60,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Monthly Rent Performance — {{ $year }}</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -82,12 +83,14 @@
                         @endforeach
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Performance by Landlord — {{ $year }}</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -116,6 +119,9 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
+
+            <div>{{ $byLandlord->links() }}</div>
         </div>
     </div>

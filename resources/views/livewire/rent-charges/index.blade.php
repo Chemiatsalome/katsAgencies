@@ -74,12 +74,19 @@
                                     <th class="text-right px-5 py-2 font-medium">Expected</th>
                                     <th class="text-right px-5 py-2 font-medium">Paid</th>
                                     <th class="text-right px-5 py-2 font-medium">Balance</th>
+                                    <th class="text-right px-5 py-2 font-medium">Credit Applied</th>
+                                    <th class="text-right px-5 py-2 font-medium">Net Due</th>
                                     <th class="text-left px-5 py-2 font-medium">Status</th>
                                     <th class="px-5 py-2"></th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-100">
                                 @forelse ($charges as $charge)
+                                    @php
+                                        $creditApplied = (float) ($creditByChargeId[$charge->id] ?? 0);
+                                        $grossBalance = max((float) $charge->amount_expected - (float) $charge->amount_paid, 0);
+                                        $netDue = max(0, $grossBalance - $creditApplied);
+                                    @endphp
                                     <tr wire:key="charge-{{ $charge->id }}" class="hover:bg-gray-50">
                                         <td class="px-5 py-3 font-medium text-charcoal">
                                             <a href="{{ route('manage.tenancies.show', $charge->tenancy) }}" wire:navigate class="hover:underline">{{ $charge->tenancy->tenant->name }}</a>
@@ -92,25 +99,42 @@
                                         <td class="px-5 py-3 text-brand-slate">{{ $charge->due_date->format('d M Y') }}</td>
                                         <td class="px-5 py-3 text-right text-brand-slate">KSh {{ number_format($charge->amount_expected, 2) }}</td>
                                         <td class="px-5 py-3 text-right text-brand-slate">KSh {{ number_format($charge->amount_paid, 2) }}</td>
-                                        <td class="px-5 py-3 text-right {{ $charge->amount_expected > $charge->amount_paid ? 'text-danger' : 'text-brand-slate' }}">
-                                            KSh {{ number_format(max($charge->amount_expected - $charge->amount_paid, 0), 2) }}
+                                        <td class="px-5 py-3 text-right {{ $grossBalance > 0 ? 'text-danger' : 'text-brand-slate' }}">
+                                            KSh {{ number_format($grossBalance, 2) }}
+                                        </td>
+                                        <td class="px-5 py-3 text-right {{ $creditApplied > 0 ? 'text-teal' : 'text-gray-400' }}">
+                                            {{ $creditApplied > 0 ? 'KSh '.number_format($creditApplied, 2) : '—' }}
+                                        </td>
+                                        <td class="px-5 py-3 text-right {{ $netDue > 0 ? 'text-danger' : 'text-brand-slate' }} font-medium">
+                                            KSh {{ number_format($netDue, 2) }}
+                                            @if ($grossBalance > 0 && $netDue <= 0)
+                                                <span class="block text-[11px] text-teal font-normal">Covered by advance credit</span>
+                                            @endif
                                         </td>
                                         @php
                                             $classification = $charge->historicalClassification($this->financialStartDateFor($charge));
                                             $historicalLabel = match ($classification) {
                                                 'historical_settled' => match ($charge->payments->first(fn ($p) => $p->isRevertibleSource())?->source) {
-                                                    'seeded_data', 'historical_import' => '🟡 Historical — Imported as Paid',
-                                                    default => '🟡 Historical — Assumed Paid',
+                                                    'seeded_data', 'historical_import' => 'Historical, Imported as Paid',
+                                                    default => 'Historical, Assumed Paid',
                                                 },
-                                                'historical_unpaid' => '🔴 Historical — Unpaid',
-                                                'system_payment' => '🟢 Paid through System',
+                                                'historical_unpaid' => 'Historical, Unpaid',
+                                                'system_payment' => 'Paid through System',
                                                 default => null,
+                                            };
+                                            $historicalDotClass = match ($classification) {
+                                                'historical_unpaid' => 'bg-danger',
+                                                'system_payment' => 'bg-success',
+                                                default => 'bg-warning',
                                             };
                                         @endphp
                                         <td class="px-5 py-3">
                                             <x-status-badge :status="$charge->status" />
                                             @if ($historicalLabel)
-                                                <span class="block text-[11px] text-brand-slate mt-0.5">{{ $historicalLabel }}</span>
+                                                <span class="flex items-center gap-1.5 text-[11px] text-brand-slate mt-0.5">
+                                                    <span class="h-1.5 w-1.5 rounded-full {{ $historicalDotClass }} shrink-0"></span>
+                                                    {{ $historicalLabel }}
+                                                </span>
                                             @endif
                                         </td>
                                         <td class="px-5 py-3 text-right whitespace-nowrap">
@@ -138,7 +162,7 @@
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="10" class="px-5 py-6 text-center text-gray-400">No tenants had rent due for this property in this period.</td>
+                                        <td colspan="12" class="px-5 py-6 text-center text-gray-400">No tenants had rent due for this property in this period.</td>
                                     </tr>
                                 @endforelse
                             </tbody>
@@ -160,10 +184,14 @@
                         <button wire:click="closePaymentModal" class="text-brand-slate hover:text-charcoal">&times;</button>
                     </div>
 
+                    @php $modalCreditApplied = (float) ($creditByChargeId[$payingCharge->id] ?? 0); @endphp
                     <p class="text-xs text-brand-slate">
                         Expected KSh {{ number_format($payingCharge->amount_expected, 2) }} ·
                         Already paid KSh {{ number_format($payingCharge->amount_paid, 2) }} ·
                         Balance KSh {{ number_format(max($payingCharge->amount_expected - $payingCharge->amount_paid, 0), 2) }}
+                        @if ($modalCreditApplied > 0)
+                            <span class="block text-teal mt-0.5">KSh {{ number_format($modalCreditApplied, 2) }} of this is already covered by advance credit from a prior overpayment.</span>
+                        @endif
                     </p>
 
                     <form wire:submit="recordPayment" class="space-y-4">

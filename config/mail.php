@@ -16,6 +16,11 @@ return [
 
     'default' => env('MAIL_MAILER', 'log'),
 
+    // Where a rejected landlord applicant is told to reach out if they want
+    // their registration reconsidered — a single watched inbox for now,
+    // not meant to stay a hardcoded person forever.
+    'support_contact_email' => env('SUPPORT_CONTACT_EMAIL', 'hello@example.com'),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

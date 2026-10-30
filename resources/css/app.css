@@ -1,3 +1,20 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Tailwind's default spacing, sizing, border-radius and font-size scales
+ * are all defined in rem, relative to the root element's font-size. Scaling
+ * that root size down on small screens proportionally shrinks padding,
+ * gaps, icon sizes and text everywhere at once — buttons, cards and type
+ * all together — without hand-editing every utility class across the app.
+ * 16px is the browser default; 14px keeps text comfortably readable while
+ * meaningfully tightening dense layouts on phones.
+ */
+@layer base {
+    @media (max-width: 639px) {
+        html {
+            font-size: 14px;
+        }
+    }
+}

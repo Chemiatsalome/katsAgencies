@@ -51,6 +51,11 @@ class Application extends Model
         return $query->whereIn('status', ['submitted', 'under_review', 'more_info_required']);
     }
 
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->whereHas('property', fn (Builder $q) => $q->accessibleBy($user));
+    }
+
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()

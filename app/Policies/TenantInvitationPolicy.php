@@ -9,31 +9,34 @@ class TenantInvitationPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, TenantInvitation $invitation): bool
     {
-        return $this->belongsToLandlord($user, $invitation);
+        return TenantInvitation::accessibleBy($user)->whereKey($invitation->id)->exists();
     }
 
     public function create(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenants.create');
     }
 
     public function update(User $user, TenantInvitation $invitation): bool
     {
-        return $this->belongsToLandlord($user, $invitation);
+        if (! TenantInvitation::accessibleBy($user)->whereKey($invitation->id)->exists()) {
+            return false;
+        }
+
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenants.create');
     }
 
     public function delete(User $user, TenantInvitation $invitation): bool
     {
-        return $this->belongsToLandlord($user, $invitation);
-    }
+        if (! TenantInvitation::accessibleBy($user)->whereKey($invitation->id)->exists()) {
+            return false;
+        }
 
-    private function belongsToLandlord(User $user, TenantInvitation $invitation): bool
-    {
-        return $invitation->house->block->property->landlord_id === $user->id;
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenants.create');
     }
 }

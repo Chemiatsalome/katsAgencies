@@ -26,9 +26,7 @@ class Index extends Component
 
     public function render()
     {
-        $landlordId = Auth::id();
-
-        $schedules = MaintenanceSchedule::whereHas('property', fn ($q) => $q->where('landlord_id', $landlordId))
+        $schedules = MaintenanceSchedule::accessibleBy(Auth::user())
             ->with('property')
             ->orderBy('next_due_date')
             ->get();

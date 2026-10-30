@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\LandlordSetting;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Session;
@@ -10,14 +11,23 @@ new class extends Component
 {
     public string $name = '';
     public string $email = '';
+    public string $phone = '';
+    public string $address = '';
 
     /**
      * Mount the component.
      */
     public function mount(): void
     {
-        $this->name = Auth::user()->name;
-        $this->email = Auth::user()->email;
+        $user = Auth::user();
+
+        $this->name = $user->name;
+        $this->email = $user->email;
+        $this->phone = (string) $user->phone;
+
+        if ($user->hasRole('landlord')) {
+            $this->address = (string) LandlordSetting::get($user->id, 'contract_landlord_address', '');
+        }
     }
 
     /**
@@ -27,18 +37,29 @@ new class extends Component
     {
         $user = Auth::user();
 
-        $validated = $this->validate([
+        $rules = [
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'lowercase', 'email', 'max:255', Rule::unique(User::class)->ignore($user->id)],
-        ]);
+            'phone' => ['nullable', 'string', 'max:20'],
+        ];
 
-        $user->fill($validated);
+        if ($user->hasRole('landlord')) {
+            $rules['address'] = ['nullable', 'string', 'max:500'];
+        }
+
+        $validated = $this->validate($rules);
+
+        $user->fill(['name' => $validated['name'], 'email' => $validated['email'], 'phone' => $validated['phone']]);
 
         if ($user->isDirty('email')) {
             $user->email_verified_at = null;
         }
 
         $user->save();
+
+        if ($user->hasRole('landlord')) {
+            LandlordSetting::set($user->id, 'contract_landlord_address', $validated['address'] ?? '');
+        }
 
         $this->dispatch('profile-updated', name: $user->name);
     }
@@ -73,12 +94,33 @@ new class extends Component
         </p>
     </header>
 
+    @if (auth()->user()->hasRole('landlord'))
+        <div class="mt-4 rounded-md bg-warning/10 border border-warning/30 text-charcoal text-sm px-4 py-3">
+            Your name, phone, email and address here are pulled directly into every tenancy agreement generated from the system template — as the landlord/lessor details tenants see and sign against. Please double-check them for accuracy before sending any contract.
+        </div>
+    @endif
+
     <form wire:submit="updateProfileInformation" class="mt-6 space-y-6">
         <div>
             <x-input-label for="name" :value="__('Name')" />
             <x-text-input wire:model="name" id="name" name="name" type="text" class="mt-1 block w-full" required autofocus autocomplete="name" />
             <x-input-error class="mt-2" :messages="$errors->get('name')" />
         </div>
+
+        <div>
+            <x-input-label for="phone" :value="__('Phone')" />
+            <x-text-input wire:model="phone" id="phone" name="phone" type="text" class="mt-1 block w-full" autocomplete="tel" />
+            <x-input-error class="mt-2" :messages="$errors->get('phone')" />
+        </div>
+
+        @if (auth()->user()->hasRole('landlord'))
+            <div>
+                <x-input-label for="address" :value="__('Address')" />
+                <textarea wire:model="address" id="address" name="address" rows="2" class="mt-1 block w-full rounded-md border-brand-border"></textarea>
+                <x-input-error class="mt-2" :messages="$errors->get('address')" />
+                <p class="mt-1 text-xs text-brand-slate">Shown as your address on system-generated tenancy agreements.</p>
+            </div>
+        @endif
 
         <div>
             <x-input-label for="email" :value="__('Email')" />

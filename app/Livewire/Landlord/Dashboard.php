@@ -4,11 +4,14 @@ namespace App\Livewire\Landlord;
 
 use App\Models\Complaint;
 use App\Models\House;
+use App\Models\LandlordSetting;
 use App\Models\MaintenanceTask;
 use App\Models\Property;
 use App\Models\RentCharge;
 use App\Models\Tenancy;
 use App\Models\Tenant;
+use App\Services\DisbursementService;
+use App\Services\PaymentGatewayService;
 use App\Services\PropertyFinanceService;
 use App\Services\RentScheduleService;
 use Illuminate\Support\Carbon;
@@ -47,7 +50,22 @@ class Dashboard extends Component
     public function render()
     {
         $landlordId = Auth::id();
+        $user = Auth::user();
         $service = new PropertyFinanceService;
+
+        // These fields feed directly into every system-generated tenancy
+        // agreement (as the landlord/lessor details a tenant signs against),
+        // so a landlord who hasn't filled them in yet needs to know before
+        // they send a contract, not after a tenant complains it's blank.
+        // Named specifically rather than a generic "phone or address" —
+        // telling a landlord who already has one of the two filled in that
+        // it's "missing" just sends them hunting for a problem that isn't
+        // there.
+        $missingProfileFields = array_filter([
+            blank($user->phone) ? 'phone number' : null,
+            blank(LandlordSetting::get($landlordId, 'contract_landlord_address')) ? 'address' : null,
+        ]);
+        $profileIncomplete = $missingProfileFields !== [];
 
         $propertiesQuery = Property::forLandlord($landlordId);
         $properties = $propertiesQuery->get(['id', 'name']);
@@ -62,6 +80,13 @@ class Dashboard extends Component
         [$from, $to] = $this->periodRange();
 
         app(RentScheduleService::class)->ensureChargesForPeriod($landlordId, null, (int) now()->year, (int) now()->month);
+
+        // Opportunistic, not just the nightly scheduled command — mirrors
+        // ensureChargesForPeriod() above. Without this, a landlord who just
+        // turned late fees on in Settings would see nothing change until
+        // whatever next runs the scheduler (which, outside a configured
+        // cron/supervisor process, may be never).
+        app(RentScheduleService::class)->applyLateFees($landlordId);
 
         $expected = $service->expectedRent($tenancyIds, (int) now()->year, (int) now()->month);
         $collected = $service->collectedRent($tenancyIds, (int) now()->year, (int) now()->month);
@@ -82,7 +107,16 @@ class Dashboard extends Component
             ->whereIn('tenancy_id', $tenancyIds)
             ->whereBetween('due_date', [now()->toDateString(), now()->addDays(3)->toDateString()])
             ->get();
-        $dueTodayCharges = RentCharge::outstanding()->whereIn('tenancy_id', $tenancyIds)->whereDate('due_date', now())->get();
+        // One shared, non-double-counted pass — both amounts below filter
+        // this same breakdown rather than each running their own separate
+        // credit-netting query (see outstandingChargeBreakdown()'s docblock
+        // for why that would overstate how far one tenant's credit goes).
+        // Counts above stay on the raw charges — a charge fully covered by
+        // credit is still genuinely overdue in the ledger; only the amount
+        // still actually owed is corrected here, not whether it counts.
+        $chargeBreakdown = $service->outstandingChargeBreakdown($tenancyIds);
+        $overdueAmount = $chargeBreakdown->filter(fn (array $r) => $r['charge']->status === 'overdue')->sum('net');
+        $dueTodayAmount = $chargeBreakdown->filter(fn (array $r) => $r['charge']->due_date->isToday())->sum('net');
 
         $expiringContracts = Tenancy::whereIn('house_id', $houseIds)->expiringSoon(30)->count();
 
@@ -98,7 +132,20 @@ class Dashboard extends Component
         $occupiedCount = House::whereIn('id', $houseIds)->occupied()->count();
         $totalUnits = $houseIds->count();
 
+        $lateFeesThisMonth = RentCharge::whereIn('tenancy_id', $tenancyIds)
+            ->whereNotNull('late_fee_charged_at')
+            ->whereYear('late_fee_charged_at', now()->year)
+            ->whereMonth('late_fee_charged_at', now()->month)
+            ->sum('late_fee_amount');
+
+        // Deposit obligations are deliberately computed and shown separately
+        // from rent above — a tenant whose rent balance is zero must not
+        // look fully settled here if their deposit still falls short.
+        $depositsOutstanding = Tenancy::whereIn('id', $tenancyIds)->get()->map(fn (Tenancy $t) => $t->depositOutstanding())->filter(fn ($amount) => $amount > 0);
+
         return view('livewire.landlord.dashboard', [
+            'profileIncomplete' => $profileIncomplete,
+            'missingProfileFields' => $missingProfileFields,
             'properties' => $properties,
             'totalProperties' => $properties->count(),
             'totalUnits' => $totalUnits,
@@ -115,17 +162,29 @@ class Dashboard extends Component
             'expenseTrend' => $expenseTrend,
 
             'overdueCount' => $overdueCharges->pluck('tenancy_id')->unique()->count(),
-            'overdueAmount' => $overdueCharges->sum(fn (RentCharge $c) => $c->amount_expected - $c->amount_paid),
+            'overdueAmount' => $overdueAmount,
             'dueSoonCount' => $dueSoonCharges->pluck('tenancy_id')->unique()->count(),
             'expiringContracts' => $expiringContracts,
             'emergencyMaintenance' => $emergencyMaintenance,
             'openMaintenance' => $openMaintenance,
             'pendingComplaints' => $pendingComplaints,
 
-            'dueTodayAmount' => $dueTodayCharges->sum('amount_expected'),
+            'dueTodayAmount' => $dueTodayAmount,
             'scheduledToday' => $scheduledToday,
 
             'totalTenants' => Tenant::whereHas('tenancies', fn ($q) => $q->whereIn('id', $tenancyIds))->count(),
+
+            'lateFeesThisMonth' => $lateFeesThisMonth,
+            'lateFeesEnabled' => LandlordSetting::get($landlordId, 'late_fee_enabled', '0') === '1',
+
+            'depositOutstandingTotal' => $depositsOutstanding->sum(),
+            'depositOutstandingCount' => $depositsOutstanding->count(),
+
+            // Money is sensitive — every landlord should understand exactly
+            // where their rent goes before they ever collect any, not
+            // discover it after the fact.
+            'directCollectionConfigured' => app(PaymentGatewayService::class)->isDirectlyConfigured($landlordId),
+            'heldPendingDisbursement' => app(DisbursementService::class)->owed($landlordId),
         ]);
     }
 }

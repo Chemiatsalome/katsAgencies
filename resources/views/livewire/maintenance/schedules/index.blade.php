@@ -13,6 +13,7 @@
 
         <div class="p-6">
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -45,6 +46,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>

@@ -15,6 +15,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Property Comparison</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -36,7 +37,7 @@
                                 <td class="px-5 py-2.5 font-medium text-charcoal whitespace-nowrap">
                                     <a href="{{ route('manage.properties.show', $row->property, ['tab' => 'performance']) }}" wire:navigate class="hover:underline">{{ $row->property->name }}</a>
                                 </td>
-                                <td class="px-5 py-2.5 text-right text-brand-slate whitespace-nowrap">KSh {{ number_format($row->investment, 2) }}</td>
+                                <td class="px-5 py-2.5 text-right text-brand-slate whitespace-nowrap">{{ $row->investment > 0 ? 'KSh '.number_format($row->investment, 2) : '—' }}</td>
                                 <td class="px-5 py-2.5 text-right text-success whitespace-nowrap">KSh {{ number_format($row->annualIncome, 2) }}</td>
                                 <td class="px-5 py-2.5 text-right text-danger whitespace-nowrap">KSh {{ number_format($row->annualExpenses, 2) }}</td>
                                 <td class="px-5 py-2.5 text-right font-medium whitespace-nowrap {{ $row->netIncome >= 0 ? 'text-success' : 'text-danger' }}">KSh {{ number_format($row->netIncome, 2) }}</td>
@@ -53,6 +54,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <p class="text-xs text-brand-slate">Gross Yield = Annual Gross Income ÷ Current Value (or Total Investment if no valuation set) × 100. Net Yield = Net Operating Income ÷ Total Investment × 100. Set purchase price, renovation costs, and current estimated value on a property's edit page to populate these figures.</p>

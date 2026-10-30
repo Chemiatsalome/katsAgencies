@@ -75,7 +75,7 @@ class Form extends Component
     public function render()
     {
         return view('livewire.maintenance.schedules.form', [
-            'properties' => Property::forLandlord(Auth::id())->orderBy('name')->get(),
+            'properties' => Property::accessibleBy(Auth::user())->orderBy('name')->get(),
         ]);
     }
 }

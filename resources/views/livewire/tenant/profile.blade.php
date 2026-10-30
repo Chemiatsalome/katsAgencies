@@ -11,7 +11,10 @@
                 @endif
 
                 <form wire:submit="save" class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
-                    <h3 class="text-sm font-semibold text-charcoal">Contact Information</h3>
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-charcoal">Contact Information</h3>
+                        <a href="{{ route('profile') }}" wire:navigate class="text-xs text-teal hover:underline">Change your name or password</a>
+                    </div>
 
                     <div class="grid grid-cols-2 gap-4">
                         <div>

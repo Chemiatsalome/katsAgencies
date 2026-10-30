@@ -6,6 +6,10 @@
 
         <title>{{ config('app.name', 'Kats Agencies') }}</title>
 
+        <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+        <link rel="icon" type="image/png" href="{{ asset('favicon.png') }}">
+        <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
+
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600,700&display=swap" rel="stylesheet" />
@@ -27,7 +31,7 @@
                             <a href="{{ route('dashboard') }}" class="text-sm font-medium text-brand-slate hover:text-charcoal">Dashboard</a>
                         @else
                             <a href="{{ route('login') }}" class="text-sm font-medium text-brand-slate hover:text-charcoal">Log in</a>
-                            <a href="{{ route('register') }}" class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                            <a href="{{ route('register') }}" class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
                                 List Your Properties
                             </a>
                         @endauth
@@ -50,14 +54,14 @@
 
                         <div class="mt-8 flex flex-wrap items-center gap-4">
                             @auth
-                                <a href="{{ route('dashboard') }}" class="inline-flex items-center px-5 py-3 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                                <a href="{{ route('dashboard') }}" class="inline-flex items-center px-5 py-3 bg-navy text-white text-sm font-medium rounded-md shadow-sm hover:bg-navy-dark hover:shadow transition">
                                     Go to Dashboard
                                 </a>
                             @else
-                                <a href="{{ route('register') }}" class="inline-flex items-center px-5 py-3 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                                <a href="{{ route('register') }}" class="inline-flex items-center px-5 py-3 bg-navy text-white text-sm font-medium rounded-md shadow-sm hover:bg-navy-dark hover:shadow transition">
                                     Register as a Landlord
                                 </a>
-                                <a href="{{ route('login') }}" class="inline-flex items-center px-5 py-3 border border-brand-border text-charcoal text-sm font-medium rounded-md hover:bg-white">
+                                <a href="{{ route('login') }}" class="inline-flex items-center px-5 py-3 border border-brand-border text-charcoal text-sm font-medium rounded-md hover:bg-white hover:shadow-sm transition">
                                     Log in
                                 </a>
                             @endauth
@@ -65,49 +69,81 @@
                         <p class="mt-3 text-xs text-brand-slate">Landlord accounts are reviewed by an administrator before activation.</p>
                     </div>
 
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Properties &amp; Units</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Full Hierarchy</p>
+                    <div class="relative rounded-2xl overflow-hidden shadow-xl aspect-[4/3] lg:aspect-auto lg:h-[26rem]">
+                        <img src="{{ asset('images/properties/homepage-hero.jpg') }}" alt="A modern managed property" class="absolute inset-0 w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-gradient-to-t from-navy-dark/60 via-navy-dark/0 to-navy-dark/0"></div>
+                        <div class="absolute bottom-0 inset-x-0 p-5">
+                            <div class="inline-flex items-center gap-2 bg-white/95 backdrop-blur-sm rounded-lg px-4 py-3 shadow-sm">
+                                <x-nav-icon name="properties" class="h-5 w-5 text-navy" />
+                                <span class="text-sm font-medium text-charcoal">Every property, block and unit — tracked in real time</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="max-w-7xl w-full mx-auto px-6 pb-14">
+                    <div class="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="properties" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Properties &amp; Units</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Full Hierarchy</p>
                             <p class="mt-1 text-sm text-brand-slate">Property → block → unit, with real occupancy status.</p>
                         </div>
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Tenants &amp; Tenancies</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Full History</p>
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="tenants" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Tenants &amp; Tenancies</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Full History</p>
                             <p class="mt-1 text-sm text-brand-slate">Move-ins, move-outs and lease history, preserved.</p>
                         </div>
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Rent &amp; Finance</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Always Current</p>
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="finance" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Rent &amp; Finance</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Always Current</p>
                             <p class="mt-1 text-sm text-brand-slate">Balances, arrears and deposits calculated automatically.</p>
                         </div>
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Maintenance</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Tracked to Close</p>
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="maintenance" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Maintenance</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Tracked to Close</p>
                             <p class="mt-1 text-sm text-brand-slate">Complaints logged, assigned and resolved.</p>
                         </div>
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Reporting</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Real Numbers</p>
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="reports" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Reporting</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Real Numbers</p>
                             <p class="mt-1 text-sm text-brand-slate">Occupancy, collection and performance reports.</p>
                         </div>
-                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6">
-                            <p class="text-xs font-medium text-brand-slate uppercase tracking-wide">Tenant Portal</p>
-                            <p class="mt-2 text-2xl font-semibold text-charcoal">Self-Service</p>
+                        <div class="bg-white rounded-lg border border-brand-border shadow-sm p-6 hover:shadow-md transition">
+                            <x-nav-icon name="profile" class="h-6 w-6 text-navy" />
+                            <p class="mt-3 text-xs font-medium text-brand-slate uppercase tracking-wide">Tenant Portal</p>
+                            <p class="mt-1 text-lg font-semibold text-charcoal">Self-Service</p>
                             <p class="mt-1 text-sm text-brand-slate">Rent history, balances and receipts, anytime.</p>
                         </div>
                     </div>
                 </div>
 
                 <div class="border-t border-brand-border bg-white">
+                    <div class="max-w-7xl w-full mx-auto px-6 py-14 grid lg:grid-cols-2 gap-10 items-center">
+                        <div class="rounded-2xl overflow-hidden shadow-sm order-last lg:order-first">
+                            <img src="{{ asset('images/properties/modern-house-02.jpg') }}" alt="A well-kept managed property" class="w-full h-full object-cover aspect-[4/3]">
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-brand-slate uppercase tracking-wide mb-2">Built for everyone on the platform</h2>
+                            <p class="text-charcoal text-xl font-semibold leading-snug mb-4">
+                                A property and tenancy management platform, not just a rent-collection tool.
+                            </p>
+                            <p class="text-brand-slate leading-relaxed">
+                                Three roles, one connected system — administrators oversee the platform, landlords run
+                                their portfolios end to end, and tenants manage their own tenancy from a self-service portal.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="border-t border-brand-border bg-offwhite">
                     <div class="max-w-7xl w-full mx-auto px-6 py-14">
-                        <h2 class="text-sm font-semibold text-brand-slate uppercase tracking-wide text-center mb-2">Built for everyone on the platform</h2>
-                        <p class="text-center text-brand-slate max-w-2xl mx-auto mb-10">
-                            Kats Agencies is a property and tenancy management platform, not just a rent-collection tool —
-                            three roles, one connected system.
-                        </p>
                         <div class="grid md:grid-cols-3 gap-6">
-                            <div class="rounded-lg border border-brand-border p-6">
+                            <div class="rounded-lg border border-brand-border p-6 bg-white shadow-sm hover:shadow-md transition">
                                 <p class="text-xs font-semibold text-teal uppercase tracking-wide">System Administration</p>
                                 <p class="mt-2 font-medium text-charcoal">Platform-level oversight</p>
                                 <p class="mt-2 text-sm text-brand-slate leading-relaxed">
@@ -116,7 +152,7 @@
                                 </p>
                                 <a href="{{ route('login') }}" wire:navigate class="mt-4 inline-block text-sm font-medium text-teal hover:underline">Admin login →</a>
                             </div>
-                            <div class="rounded-lg border border-brand-border p-6">
+                            <div class="rounded-lg border border-brand-border p-6 bg-white shadow-sm hover:shadow-md transition">
                                 <p class="text-xs font-semibold text-navy uppercase tracking-wide">Landlords</p>
                                 <p class="mt-2 font-medium text-charcoal">Run your own portfolio</p>
                                 <ul class="mt-2 text-sm text-brand-slate leading-relaxed space-y-1 list-disc list-inside">
@@ -129,7 +165,7 @@
                                 </ul>
                                 <a href="{{ route('login') }}" wire:navigate class="mt-4 inline-block text-sm font-medium text-navy hover:underline">Landlord login →</a>
                             </div>
-                            <div class="rounded-lg border border-brand-border p-6">
+                            <div class="rounded-lg border border-brand-border p-6 bg-white shadow-sm hover:shadow-md transition">
                                 <p class="text-xs font-semibold text-gold uppercase tracking-wide">Tenants</p>
                                 <p class="mt-2 font-medium text-charcoal">Manage your tenancy</p>
                                 <p class="mt-2 text-sm text-brand-slate leading-relaxed">
@@ -147,17 +183,17 @@
                         <h2 class="text-sm font-semibold text-brand-slate uppercase tracking-wide text-center mb-8">How Kats Agencies works</h2>
                         <div class="grid md:grid-cols-3 gap-8">
                             <div class="text-center">
-                                <div class="mx-auto h-10 w-10 rounded-full bg-navy-light text-navy flex items-center justify-center font-semibold">1</div>
+                                <div class="mx-auto h-10 w-10 rounded-full bg-navy text-white flex items-center justify-center font-semibold shadow-sm">1</div>
                                 <p class="mt-3 font-medium text-charcoal">Register your portfolio</p>
                                 <p class="mt-1 text-sm text-brand-slate">Sign up as a landlord and get approved to list your properties.</p>
                             </div>
                             <div class="text-center">
-                                <div class="mx-auto h-10 w-10 rounded-full bg-navy-light text-navy flex items-center justify-center font-semibold">2</div>
+                                <div class="mx-auto h-10 w-10 rounded-full bg-navy text-white flex items-center justify-center font-semibold shadow-sm">2</div>
                                 <p class="mt-3 font-medium text-charcoal">Manage everything in one place</p>
                                 <p class="mt-1 text-sm text-brand-slate">Properties, units, tenants, rent, expenses and maintenance from your own portal.</p>
                             </div>
                             <div class="text-center">
-                                <div class="mx-auto h-10 w-10 rounded-full bg-navy-light text-navy flex items-center justify-center font-semibold">3</div>
+                                <div class="mx-auto h-10 w-10 rounded-full bg-navy text-white flex items-center justify-center font-semibold shadow-sm">3</div>
                                 <p class="mt-3 font-medium text-charcoal">Tenants stay informed</p>
                                 <p class="mt-1 text-sm text-brand-slate">Tenants get their own portal for rent history, balances and complaints.</p>
                             </div>

@@ -9,6 +9,7 @@
             </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -18,6 +19,7 @@
                             <th class="text-right px-5 py-2 font-medium">Vacant Since</th>
                             <th class="text-right px-5 py-2 font-medium">Days Vacant</th>
                             <th class="text-right px-5 py-2 font-medium">Estimated Lost Rent</th>
+                            <th class="px-5 py-2"></th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -29,12 +31,20 @@
                                 <td class="px-5 py-2.5 text-right text-brand-slate">{{ \Illuminate\Support\Carbon::parse($row->vacantSince)->format('d M Y') }}</td>
                                 <td class="px-5 py-2.5 text-right {{ $row->daysVacant > 30 ? 'text-danger' : 'text-brand-slate' }}">{{ $row->daysVacant }}</td>
                                 <td class="px-5 py-2.5 text-right text-danger">KSh {{ number_format($row->estimatedLostRent) }}</td>
+                                <td class="px-5 py-2.5 text-right">
+                                    <a href="{{ route('manage.tenancies.create', ['house_id' => $row->house->id]) }}" wire:navigate
+                                       onclick="event.stopPropagation()"
+                                       class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark whitespace-nowrap">
+                                        Add Tenant
+                                    </a>
+                                </td>
                             </tr>
                         @empty
-                            <tr><td colspan="6" class="px-5 py-6 text-center text-gray-400">No vacant units — full occupancy.</td></tr>
+                            <tr><td colspan="7" class="px-5 py-6 text-center text-gray-400">No vacant units — full occupancy.</td></tr>
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>

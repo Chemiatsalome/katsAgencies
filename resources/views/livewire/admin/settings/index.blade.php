@@ -9,7 +9,7 @@
             @endif
 
             <div class="flex gap-2 mb-6 flex-wrap">
-                @foreach (['general' => 'General', 'rent' => 'Rent', 'notifications' => 'Notifications', 'finance' => 'Finance', 'property' => 'Property'] as $value => $label)
+                @foreach (['general' => 'General', 'finance' => 'Finance', 'property' => 'Property', 'payments' => 'Payments'] as $value => $label)
                     <button wire:click="$set('tab', '{{ $value }}')" class="px-3 py-1.5 text-sm rounded-md {{ $tab === $value ? 'bg-navy text-white' : 'bg-white text-brand-slate border border-brand-border' }}">
                         {{ $label }}
                     </button>
@@ -44,44 +44,6 @@
                         </div>
                     </div>
                     <x-primary-button type="submit">Save General Settings</x-primary-button>
-                </form>
-            @elseif ($tab === 'rent')
-                <form wire:submit="saveRent" class="bg-white shadow-sm rounded-lg border border-brand-border p-6 max-w-xl space-y-5">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <x-input-label for="default_due_day" value="Default Rent Due Day" />
-                            <x-text-input id="default_due_day" type="number" min="1" max="31" wire:model="default_due_day" class="mt-1 block w-full" />
-                        </div>
-                        <div>
-                            <x-input-label for="grace_period_days" value="Grace Period (days)" />
-                            <x-text-input id="grace_period_days" type="number" min="0" wire:model="grace_period_days" class="mt-1 block w-full" />
-                        </div>
-                    </div>
-                    <div>
-                        <x-input-label for="arrears_threshold" value="Large Arrears Threshold (KSh)" />
-                        <x-text-input id="arrears_threshold" type="number" step="0.01" wire:model="arrears_threshold" class="mt-1 block w-full" />
-                        <p class="text-xs text-brand-slate mt-1">Tenancies with arrears above this amount are flagged as high-priority on the dashboard.</p>
-                    </div>
-                    <div>
-                        <x-input-label for="late_payment_rule" value="Late Payment Rule (notes)" />
-                        <textarea id="late_payment_rule" wire:model="late_payment_rule" rows="3" class="mt-1 block w-full rounded-md border-brand-border"></textarea>
-                    </div>
-                    <x-primary-button type="submit">Save Rent Settings</x-primary-button>
-                </form>
-            @elseif ($tab === 'notifications')
-                <form wire:submit="saveNotifications" class="bg-white shadow-sm rounded-lg border border-brand-border p-6 max-w-xl space-y-5">
-                    <div>
-                        <x-input-label for="reminder_days_before" value="Send Rent Reminder (days before due)" />
-                        <x-text-input id="reminder_days_before" type="number" min="0" wire:model="reminder_days_before" class="mt-1 block w-32" />
-                    </div>
-                    <div>
-                        <x-input-label for="email_from_name" value="Email 'From' Name" />
-                        <x-text-input id="email_from_name" type="text" wire:model="email_from_name" class="mt-1 block w-full" />
-                    </div>
-                    <div class="bg-navy-light text-navy text-sm rounded-md px-4 py-3">
-                        SMS provider is not configured in this environment — SMS notifications are logged in the Notification Centre with a Pending status rather than delivered to a carrier.
-                    </div>
-                    <x-primary-button type="submit">Save Notification Settings</x-primary-button>
                 </form>
             @elseif ($tab === 'finance')
                 <div class="grid grid-cols-2 gap-6 max-w-3xl">
@@ -152,6 +114,78 @@
                 <p class="text-xs text-brand-slate mt-4 max-w-2xl">
                     These lists are defined at the code level in this version of the system rather than editable here — changing them requires a small code change since they're used throughout filtering and reporting. Everything else on this page is fully editable.
                 </p>
+            @elseif ($tab === 'payments')
+                <form wire:submit="savePayments" class="bg-white shadow-sm rounded-lg border border-brand-border p-6 max-w-xl space-y-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-charcoal">Kats Paybill (M-Pesa)</h3>
+                            <p class="text-xs text-brand-slate mt-1">The platform's own paybill — every tenant whose landlord hasn't set up direct collection pays into this.</p>
+                        </div>
+                        <x-status-badge :status="$platformConfigured ? 'active' : 'inactive'" />
+                    </div>
+
+                    <div>
+                        <x-input-label for="mpesa_env" value="Environment" />
+                        <select id="mpesa_env" wire:model="mpesa_env" class="mt-1 block w-full rounded-md border-brand-border">
+                            <option value="sandbox">Sandbox (testing — never moves real money)</option>
+                            <option value="production">Production (live)</option>
+                        </select>
+                        <x-input-error :messages="$errors->get('mpesa_env')" class="mt-1" />
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <x-input-label for="mpesa_consumer_key" value="Consumer Key" />
+                            <x-text-input id="mpesa_consumer_key" type="text" wire:model="mpesa_consumer_key" class="mt-1 block w-full" />
+                            <x-input-error :messages="$errors->get('mpesa_consumer_key')" class="mt-1" />
+                        </div>
+                        <div>
+                            <x-input-label for="mpesa_consumer_secret" value="Consumer Secret" />
+                            <x-text-input id="mpesa_consumer_secret" type="password" wire:model="mpesa_consumer_secret" class="mt-1 block w-full" placeholder="Leave blank to keep existing value" />
+                            <x-input-error :messages="$errors->get('mpesa_consumer_secret')" class="mt-1" />
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <x-input-label for="mpesa_shortcode" value="Shortcode (Paybill/Till)" />
+                            <x-text-input id="mpesa_shortcode" type="text" wire:model="mpesa_shortcode" class="mt-1 block w-full" />
+                            <x-input-error :messages="$errors->get('mpesa_shortcode')" class="mt-1" />
+                        </div>
+                        <div>
+                            <x-input-label for="mpesa_passkey" value="Daraja Passkey" />
+                            <x-text-input id="mpesa_passkey" type="password" wire:model="mpesa_passkey" class="mt-1 block w-full" placeholder="Leave blank to keep existing value" />
+                            <x-input-error :messages="$errors->get('mpesa_passkey')" class="mt-1" />
+                        </div>
+                    </div>
+
+                    <div>
+                        <x-input-label for="mpesa_callback_url" value="Callback URL (public HTTPS base — no secret suffix)" />
+                        <x-text-input id="mpesa_callback_url" type="text" wire:model="mpesa_callback_url" class="mt-1 block w-full" placeholder="https://your-domain.com/mpesa/callback" />
+                        <x-input-error :messages="$errors->get('mpesa_callback_url')" class="mt-1" />
+                    </div>
+
+                    <div>
+                        <x-input-label for="mpesa_callback_secret" value="Callback Secret" />
+                        <p class="text-xs text-brand-slate mb-1">
+                            Appended to the callback URL automatically — Daraja callbacks carry no signature of their own, so this is what stops a forged "payment succeeded" request. Register the full URL below with Safaricom, not the base URL above.
+                        </p>
+                        <div class="flex gap-2">
+                            <x-text-input id="mpesa_callback_secret" type="text" wire:model="mpesa_callback_secret" class="block w-full font-mono text-xs" />
+                            <x-secondary-button type="button" wire:click="generateCallbackSecret">Generate New</x-secondary-button>
+                        </div>
+                        <x-input-error :messages="$errors->get('mpesa_callback_secret')" class="mt-1" />
+                        @if ($mpesa_callback_url && $mpesa_callback_secret)
+                            <p class="text-xs text-brand-slate mt-2 break-all">Full URL to register with Safaricom: <span class="font-mono">{{ rtrim($mpesa_callback_url, '/') }}/{{ $mpesa_callback_secret }}</span></p>
+                        @endif
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <x-primary-button type="submit">Save Payment Settings</x-primary-button>
+                        <x-secondary-button type="button" wire:click="testConnection">Test Connection</x-secondary-button>
+                    </div>
+                    <p class="text-xs text-brand-slate">Save your changes first, then Test Connection to confirm Safaricom accepts them.</p>
+                </form>
             @endif
         </div>
     </div>

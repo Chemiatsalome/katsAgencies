@@ -11,6 +11,13 @@ use Livewire\Attributes\Layout;
 #[Layout('layouts.admin')]
 class Performance extends Component
 {
+    // No manager permission unlocks this page — ROI/yield analytics stay
+    // landlord-only regardless of what else a manager has been granted.
+    public function mount(): void
+    {
+        abort_unless(Auth::user()->hasRole('landlord'), 403);
+    }
+
     public function render()
     {
         $landlordId = Auth::id();

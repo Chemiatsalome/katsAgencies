@@ -22,8 +22,8 @@ class Index extends Component
 
     public function render()
     {
-        $landlordId = Auth::id();
-        $houseQuery = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlordId));
+        $user = Auth::user();
+        $houseQuery = House::accessibleBy($user);
 
         $statusCounts = (clone $houseQuery)->selectRaw('status, count(*) as total')->groupBy('status')->pluck('total', 'status');
         $totalUnits = $statusCounts->sum();
@@ -34,7 +34,7 @@ class Index extends Component
             ->filter(fn ($row) => $row['count'] > 0)
             ->values();
 
-        $byProperty = Property::forLandlord($landlordId)->with('houses')->orderBy('name')->get()->map(function (Property $property) {
+        $byProperty = Property::accessibleBy($user)->with('houses')->orderBy('name')->get()->map(function (Property $property) {
             $total = $property->houses->count();
             $occupied = $property->houses->where('status', 'occupied')->count();
 

@@ -20,17 +20,31 @@ class Index extends Component
     #[Url]
     public int $perPage = 25;
 
+    // ApplicationPolicy::viewAny() passes for any manager — the
+    // landlord-granted applications.view permission is the real gate, same
+    // as Contracts/Arrears.
+    public function mount(): void
+    {
+        abort_unless(Auth::user()->hasManagerPermission('applications.view'), 403);
+    }
+
     public function render()
     {
-        $landlordId = Auth::id();
+        $user = Auth::user();
 
         $query = Application::with(['property', 'house'])
-            ->whereHas('property', fn ($q) => $q->where('landlord_id', $landlordId))
+            ->accessibleBy($user)
             ->when($this->status !== 'all', fn ($q) => $q->where('status', $this->status))
             ->latest('application_date');
 
+        $statusCounts = Application::accessibleBy($user)
+            ->selectRaw('status, count(*) as count')
+            ->groupBy('status')
+            ->pluck('count', 'status');
+
         return view('livewire.applications.index', [
             'applications' => $query->paginate($this->perPage),
+            'statusCounts' => $statusCounts,
         ]);
     }
 }

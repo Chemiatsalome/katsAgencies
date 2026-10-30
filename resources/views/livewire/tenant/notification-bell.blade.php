@@ -17,10 +17,16 @@
         </div>
         <div class="max-h-80 overflow-y-auto divide-y divide-brand-border">
             @forelse ($recent as $notification)
+                @php $actionUrl = $notification->actionUrl(); @endphp
                 <div class="px-4 py-3 {{ ! $notification->read_at ? 'bg-offwhite' : '' }}">
                     <p class="text-sm font-medium text-charcoal">{{ $notification->title }}</p>
                     <p class="text-xs text-brand-slate mt-0.5">{{ $notification->body }}</p>
-                    <p class="text-[11px] text-brand-slate mt-1">{{ $notification->created_at->diffForHumans() }}</p>
+                    <div class="flex items-center justify-between mt-1">
+                        <p class="text-[11px] text-brand-slate">{{ $notification->created_at->diffForHumans() }}</p>
+                        @if ($actionUrl)
+                            <a href="{{ $actionUrl }}" wire:navigate class="text-xs text-teal hover:underline shrink-0">View →</a>
+                        @endif
+                    </div>
                 </div>
             @empty
                 <p class="px-4 py-6 text-sm text-brand-slate text-center">No notifications yet.</p>

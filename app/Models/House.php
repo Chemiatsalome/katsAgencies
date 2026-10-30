@@ -21,6 +21,39 @@ class House extends Model
 {
     use LogsActivity;
 
+    /** Centralized so Houses\Form and Properties\Wizard validate against the exact same list, instead of two hardcoded 'in:...' strings drifting apart. */
+    public const TYPES = [
+        'bedsitter', 'studio', 'sq', 'one_bedroom', 'two_bedroom', 'three_bedroom',
+        'four_bedroom', 'house', 'maisonette', 'shop', 'office', 'villa', 'other',
+    ];
+
+    /**
+     * Only the explicitly numbered types have a bedroom count implied by
+     * the type itself — everything else (bedsitter, studio, sq, house,
+     * maisonette, shop, office, villa, other) genuinely varies per unit, so
+     * those stay landlord-entered rather than guessed.
+     */
+    public const BEDROOMS_BY_TYPE = [
+        'one_bedroom' => 1,
+        'two_bedroom' => 2,
+        'three_bedroom' => 3,
+        'four_bedroom' => 4,
+    ];
+
+    public static function bedroomsImpliedByType(?string $type): ?int
+    {
+        return self::BEDROOMS_BY_TYPE[$type] ?? null;
+    }
+
+    protected static function booted(): void
+    {
+        // documents() is polymorphic — there's no DB-level FK to cascade
+        // this, and Document's own deleting hook (which removes the
+        // physical file) only fires per-row through Eloquent, not via a
+        // parent hard delete, so it has to be triggered explicitly here.
+        static::deleting(fn (House $house) => $house->documents->each->delete());
+    }
+
     protected function casts(): array
     {
         return [
@@ -78,6 +111,12 @@ class House extends Model
     public function scopeOccupied(Builder $query): Builder
     {
         return $query->where('status', 'occupied');
+    }
+
+    /** Mirrors Property::scopeAccessibleBy, two relation hops deeper (block->property). */
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->whereHas('block', fn (Builder $q) => $q->accessibleBy($user));
     }
 
     public function getActivitylogOptions(): LogOptions

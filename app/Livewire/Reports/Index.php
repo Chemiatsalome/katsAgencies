@@ -28,8 +28,20 @@ class Index extends Component
     #[Url]
     public int $perPage = 25;
 
+    // Report types whose underlying query actually filters by year/month.
+    // The rest (arrears/cash_flow/property_performance/occupancy/vacancy/
+    // contract_expiry/deposits) always show current-state or trailing-12-
+    // month data regardless of these controls — showing the Year/Month
+    // selectors for them would silently do nothing and mislead the landlord
+    // into thinking they changed what they're looking at.
+    public const DATE_FILTERABLE_TYPES = ['rent_collection', 'income', 'expenses', 'maintenance_cost', 'payment_history'];
+
     public function mount(): void
     {
+        // No manager permission unlocks this page — financial reports stay
+        // landlord-only regardless of what else a manager has been granted.
+        abort_unless(Auth::user()->hasRole('landlord'), 403);
+
         if ($this->year === '') {
             $this->year = (string) now()->year;
         }
@@ -94,6 +106,7 @@ class Index extends Component
             'types' => $this->available(),
             'report' => $report,
             'rows' => $paginatedRows,
+            'isDateFilterable' => in_array($this->type, self::DATE_FILTERABLE_TYPES, true),
         ]);
     }
 }

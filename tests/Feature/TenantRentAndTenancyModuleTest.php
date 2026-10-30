@@ -54,6 +54,59 @@ class TenantRentAndTenancyModuleTest extends TestCase
             ->assertStatus(200);
     }
 
+    public function test_tenant_cannot_download_a_receipt_for_an_opening_balance_entry(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->firstOrFail();
+
+        $payment = Payment::create([
+            'tenancy_id' => $tenancy->id,
+            'amount' => 5000,
+            'payment_date' => now()->subMonths(2),
+            'method' => 'other',
+            'source' => 'opening_balance',
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(Statements::class)
+            ->call('downloadReceipt', $payment->id)
+            ->assertStatus(404);
+    }
+
+    public function test_opening_balance_payments_are_labeled_not_hidden_in_tenant_payment_lists(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->firstOrFail();
+
+        Payment::create([
+            'tenancy_id' => $tenancy->id,
+            'amount' => 5000,
+            'payment_date' => now()->subMonths(2),
+            'method' => 'other',
+            'source' => 'opening_balance',
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(\App\Livewire\Tenant\Payments::class)
+            ->assertSee('Historical balance');
+    }
+
+    public function test_tenant_dashboard_profile_link_points_to_the_tenant_profile_page(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+
+        $this->actingAs($user)
+            ->get(route('tenant.dashboard'))
+            ->assertOk()
+            ->assertSee(route('tenant.profile'), false);
+    }
+
     public function test_tenant_cannot_download_another_tenants_payment_receipt(): void
     {
         $this->seed();
@@ -85,14 +138,21 @@ class TenantRentAndTenancyModuleTest extends TestCase
 
         Livewire::actingAs($user)
             ->test(MyTenancy::class)
-            ->set('requestMessage', 'My phone number on file is outdated.')
-            ->call('requestChange')
+            ->call('openRequestChangeForm')
+            ->set('change_category', 'other')
+            ->set('change_requested_change', 'My phone number on file is outdated.')
+            ->call('submitChangeRequest')
             ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('tenancy_change_requests', [
+            'tenancy_id' => $tenancy->id,
+            'category' => 'other',
+        ]);
 
         $this->assertTrue(
             AppNotification::where('notifiable_type', $landlord->getMorphClass())
                 ->where('notifiable_id', $landlord->id)
-                ->where('event_type', 'tenancy_change_request')
+                ->where('event_type', 'tenancy_change_request_submitted')
                 ->exists()
         );
     }

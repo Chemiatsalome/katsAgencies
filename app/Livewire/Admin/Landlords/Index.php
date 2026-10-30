@@ -2,7 +2,9 @@
 
 namespace App\Livewire\Admin\Landlords;
 
+use App\Models\Setting;
 use App\Models\User;
+use App\Services\NotificationService;
 use Livewire\Component;
 use Livewire\WithPagination;
 use Livewire\Attributes\Layout;
@@ -18,7 +20,41 @@ class Index extends Component
 
     public function updateStatus(int $userId, string $status): void
     {
-        User::role('landlord')->findOrFail($userId)->update(['status' => $status]);
+        abort_unless(in_array($status, ['active', 'inactive', 'suspended'], true), 422);
+
+        $user = User::role('landlord')->findOrFail($userId);
+        $previousStatus = $user->status;
+
+        $user->update([
+            'status' => $status,
+            'approved_at' => $status === 'active' ? ($user->approved_at ?? now()) : $user->approved_at,
+        ]);
+
+        // Previously silent — unlike the application approve/reject flow
+        // (which always emails a reason), changing an already-active
+        // landlord's status gave no proactive notice at all; they only
+        // found out reactively, at their next forced logout/login attempt
+        // (see EnsureAccountIsActive), with no explanation of why.
+        if ($previousStatus !== $status) {
+            $contact = Setting::get('org_contact_email');
+            $contactLine = $contact ? " If you believe this is a mistake, contact {$contact}." : '';
+
+            $message = match ($status) {
+                'suspended' => "Your Kats Agencies account has been suspended by an administrator.{$contactLine}",
+                'inactive' => "Your Kats Agencies account has been deactivated by an administrator.{$contactLine}",
+                'active' => 'Your Kats Agencies account is active again.',
+                default => 'Your Kats Agencies account status has changed.',
+            };
+
+            app(NotificationService::class)->notify(
+                $user,
+                'landlord_status_changed',
+                $status === 'active' ? 'Your Account Is Active Again' : 'Your Account Status Has Changed',
+                $message,
+                ['in_app', 'email'],
+                $user,
+            );
+        }
     }
 
     public function render()

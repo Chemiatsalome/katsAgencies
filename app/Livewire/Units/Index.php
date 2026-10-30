@@ -38,18 +38,13 @@ class Index extends Component
     public function render()
     {
         $user = Auth::user();
-        $isAdmin = $user->hasRole('admin');
 
-        $propertiesQuery = $isAdmin ? Property::query() : Property::forLandlord($user->id);
-        $properties = $propertiesQuery->orderBy('name')->get(['id', 'name']);
+        $properties = Property::accessibleBy($user)->orderBy('name')->get(['id', 'name']);
 
-        $blocksQuery = Block::query()->when(
+        $blocksQuery = Block::accessibleBy($user)->when(
             $this->propertyId !== 'all',
             fn ($q) => $q->where('property_id', $this->propertyId)
         );
-        if (! $isAdmin) {
-            $blocksQuery->whereHas('property', fn ($q) => $q->where('landlord_id', $user->id));
-        }
         $blocks = $blocksQuery->orderBy('name')->get(['id', 'name', 'property_id']);
 
         $query = House::with(['block.property', 'currentTenancy.tenant'])
@@ -57,11 +52,8 @@ class Index extends Component
             ->when($this->search, fn ($q) => $q->where('house_number', 'like', "%{$this->search}%"))
             ->when($this->propertyId !== 'all', fn ($q) => $q->whereHas('block', fn ($q2) => $q2->where('property_id', $this->propertyId)))
             ->when($this->blockId !== 'all', fn ($q) => $q->where('block_id', $this->blockId))
-            ->orderBy('house_number');
-
-        if (! $isAdmin) {
-            $query->whereHas('block.property', fn ($q) => $q->where('landlord_id', $user->id));
-        }
+            ->orderBy('house_number')
+            ->accessibleBy($user);
 
         return view('livewire.units.index', [
             'houses' => $query->paginate($this->perPage),

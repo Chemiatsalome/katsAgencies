@@ -16,7 +16,7 @@
                 </div>
 
                 @if ($landlordId)
-                    <button wire:click="export" class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                    <button wire:click="export" class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
                         Export Property/Unit Report (CSV)
                     </button>
                 @endif

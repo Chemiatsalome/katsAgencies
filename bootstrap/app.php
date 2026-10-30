@@ -17,10 +17,20 @@ return Application::configure(basePath: dirname(__DIR__))
         // current period's charges generated ahead of when they're due,
         // rather than relying on a landlord viewing a page to trigger it.
         $schedule->command('rent:generate-charges')->dailyAt('00:05');
+        $schedule->command('rent:apply-late-fees')->dailyAt('00:30');
+
+        // Catches an M-Pesa transaction whose callback never arrived at all
+        // — the only real reconciliation gap in the whole payment flow.
+        // Every five minutes rather than daily: a tenant waiting to find
+        // out whether their rent payment went through shouldn't wait a day.
+        $schedule->command('mpesa:reconcile-pending')->everyFiveMinutes();
 
         $schedule->command('notifications:rent-reminders')->dailyAt('07:00');
         $schedule->command('notifications:contract-expiry')->dailyAt('07:15');
+        $schedule->command('notifications:renewal-reminders')->dailyAt('07:30');
+        $schedule->command('notifications:disbursements-overdue')->dailyAt('08:00');
         $schedule->command('tenant-invitations:expire')->hourly();
+        $schedule->command('maintenance:generate-recurring-tasks')->dailyAt('06:00');
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
@@ -35,7 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Safaricom posts here with no CSRF token or session of ours.
         $middleware->validateCsrfTokens(except: [
-            'mpesa/callback',
+            'mpesa/callback/*',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

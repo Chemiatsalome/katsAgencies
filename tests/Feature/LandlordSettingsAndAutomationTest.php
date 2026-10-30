@@ -10,7 +10,6 @@ use App\Models\MaintenanceTask;
 use App\Models\RentCharge;
 use App\Models\Tenancy;
 use App\Models\User;
-use App\Services\PaymentGatewayService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -18,27 +17,6 @@ use Tests\TestCase;
 class LandlordSettingsAndAutomationTest extends TestCase
 {
     use RefreshDatabase;
-
-    public function test_landlord_can_save_payment_gateway_settings(): void
-    {
-        $this->seed();
-
-        $landlord = User::role('landlord')->firstOrFail();
-
-        Livewire::actingAs($landlord)
-            ->test(SettingsIndex::class)
-            ->set('mpesa_shortcode_type', 'paybill')
-            ->set('mpesa_shortcode', '400200')
-            ->set('mpesa_consumer_key', 'key-123')
-            ->set('mpesa_consumer_secret', 'secret-456')
-            ->set('mpesa_passkey', 'passkey-789')
-            ->call('saveGateway')
-            ->assertHasNoErrors();
-
-        $this->assertEquals('400200', LandlordSetting::get($landlord->id, 'mpesa_shortcode'));
-        $this->assertEquals('key-123', LandlordSetting::getEncrypted($landlord->id, 'mpesa_consumer_key'));
-        $this->assertTrue(app(PaymentGatewayService::class)->isConfigured($landlord->id));
-    }
 
     public function test_landlord_can_save_rent_reminder_schedule(): void
     {

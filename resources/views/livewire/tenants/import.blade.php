@@ -16,8 +16,14 @@
                 @if (! $previewed)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-4">
                         <p class="text-sm text-brand-slate">
-                            Upload a CSV file with columns: <span class="font-medium text-charcoal">Property, Block, Unit, Name, Phone, Rent, Due Date</span>.
+                            Upload a CSV file with columns: <span class="font-medium text-charcoal">Property, Block, Unit, Name, Phone, Rent, Due Date</span>,
+                            plus optional <span class="font-medium text-charcoal">Move In Date</span>.
                             Due Date is the day of the month rent is due (defaults to 1 if left blank).
+                        </p>
+                        <p class="text-xs text-brand-slate">
+                            Already had this tenant before you started using Kats Agencies? Put their real, past move-in date in Move In Date (format YYYY-MM-DD).
+                            Rent from before your <a href="{{ route('manage.settings.index', ['tab' => 'financial']) }}" wire:navigate class="text-teal hover:underline">Financial Start Date</a> is
+                            assumed already settled, so this won't manufacture arrears that never happened. Leave it blank for a tenant actually moving in today.
                         </p>
 
                         <div>
@@ -64,6 +70,7 @@
                                         <th class="text-left px-3 py-2 font-medium">Name</th>
                                         <th class="text-left px-3 py-2 font-medium">Phone</th>
                                         <th class="text-right px-3 py-2 font-medium">Rent</th>
+                                        <th class="text-left px-3 py-2 font-medium">Move In Date</th>
                                         <th class="text-left px-3 py-2 font-medium">Result</th>
                                     </tr>
                                 </thead>
@@ -76,6 +83,7 @@
                                             <td class="px-3 py-2">{{ $row['name'] }}</td>
                                             <td class="px-3 py-2">{{ $row['phone'] }}</td>
                                             <td class="px-3 py-2 text-right">{{ $row['rent'] }}</td>
+                                            <td class="px-3 py-2">{{ $row['move_in_date'] ?: 'Today' }}</td>
                                             <td class="px-3 py-2">
                                                 @if ($row['bucket'] === 'valid')
                                                     <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">Valid</span>

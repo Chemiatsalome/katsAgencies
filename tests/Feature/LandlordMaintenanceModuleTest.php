@@ -178,6 +178,64 @@ class LandlordMaintenanceModuleTest extends TestCase
             ->assertSee('Water Tank Cleaning');
     }
 
+    public function test_emergency_priority_tasks_sort_first_not_last(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+
+        foreach (['low', 'medium', 'high', 'emergency'] as $priority) {
+            MaintenanceTask::create([
+                'property_id' => $property->id,
+                'title' => ucfirst($priority).' task',
+                'category' => 'general',
+                'priority' => $priority,
+                'status' => 'submitted',
+            ]);
+        }
+
+        $component = Livewire::actingAs($landlord)->test(MaintenanceIndex::class, ['tab' => 'scheduled']);
+        $tasks = $component->instance()->render()->getData()['tasks'];
+
+        // Alphabetical descending on the raw string would put "medium" first
+        // and "emergency" last — urgency order must put emergency first.
+        $this->assertEquals('emergency', $tasks->first()->priority);
+        $this->assertEquals('low', $tasks->last()->priority);
+    }
+
+    public function test_starting_progress_on_an_already_completed_task_is_a_no_op(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+
+        $task = MaintenanceTask::create([
+            'property_id' => $property->id,
+            'title' => 'Repaint corridor',
+            'category' => 'painting',
+            'priority' => 'low',
+            'status' => 'completed',
+            'actual_cost' => 3500,
+            'completed_at' => now(),
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
+            ->call('startProgress', $task->id);
+
+        $this->assertEquals('completed', $task->fresh()->status);
+        $this->assertNotNull($task->fresh()->completed_at);
+    }
+
+    public function test_recurring_maintenance_schedules_are_registered_on_the_daily_scheduler(): void
+    {
+        $this->artisan('schedule:list')
+            ->expectsOutputToContain('maintenance:generate-recurring-tasks')
+            ->assertExitCode(0);
+    }
+
     public function test_a_landlord_cannot_convert_another_landlords_complaint(): void
     {
         $this->seed();

@@ -3,62 +3,49 @@
             <div class="flex items-center justify-between">
                 <h2 class="font-semibold text-xl text-charcoal leading-tight">Properties</h2>
                 @can('create', \App\Models\Property::class)
-                    <a href="{{ route('manage.properties.create') }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
-                        + Add Property
-                    </a>
+                    <div class="flex items-center gap-2">
+                        <a href="{{ route('manage.properties.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
+                            + Add Property
+                        </a>
+                        <a href="{{ route('manage.properties.import') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-brand-border text-charcoal text-xs sm:text-sm font-medium rounded-md hover:bg-gray-50">
+                            Import Properties
+                        </a>
+                    </div>
                 @endcan
             </div>
         </x-slot>
 
         <div class="py-8">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
-                    <table class="min-w-full text-sm">
-                        <thead class="bg-gray-50 text-brand-slate">
-                            <tr>
-                                <th class="text-left px-5 py-2 font-medium">Name</th>
-                                <th class="text-left px-5 py-2 font-medium">Address</th>
-                                <th class="text-left px-5 py-2 font-medium">Blocks</th>
-                                <th class="text-left px-5 py-2 font-medium">Houses (Occupied)</th>
-                                <th class="text-left px-5 py-2 font-medium">Status</th>
-                                <th class="px-5 py-2"></th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            @forelse ($properties as $property)
-                                <tr wire:key="property-{{ $property->id }}">
-                                    <td class="px-5 py-3 font-medium text-charcoal">
-                                        <a href="{{ route('manage.properties.show', $property) }}" wire:navigate class="hover:underline">{{ $property->name }}</a>
-                                    </td>
-                                    <td class="px-5 py-3 text-brand-slate">{{ $property->address ?? '—' }}</td>
-                                    <td class="px-5 py-3">
-                                        <a href="{{ route('manage.blocks.index', $property) }}" wire:navigate class="text-teal hover:underline">
-                                            {{ $property->blocks_count }} block{{ $property->blocks_count === 1 ? '' : 's' }}
-                                        </a>
-                                    </td>
-                                    <td class="px-5 py-3 text-brand-slate">
-                                        {{ $property->houses->count() }} ({{ $property->houses->where('status', 'occupied')->count() }})
-                                    </td>
-                                    <td class="px-5 py-3"><x-status-badge :status="$property->status" /></td>
-                                    <td class="px-5 py-3 text-right space-x-3">
-                                        <a href="{{ route('manage.properties.edit', $property) }}" wire:navigate class="text-brand-slate hover:text-charcoal">Edit</a>
-                                        @can('delete', $property)
-                                            <button wire:click="delete({{ $property->id }})" wire:confirm="Delete this property and all its blocks/houses?" class="text-danger hover:text-danger/80">Delete</button>
-                                        @endcan
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="6" class="px-5 py-6 text-center text-gray-400">No properties yet.</td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+                @if (session('status'))
+                    <div class="bg-teal/10 border border-teal/30 text-charcoal text-sm rounded-md px-4 py-3">
+                        {{ session('status') }}
+                    </div>
+                @endif
 
-                <div class="mt-4">
-                    <x-per-page-select :paginator="$properties" />
-                </div>
+                @if ($properties->isEmpty())
+                    <x-empty-state icon="properties" title="No properties yet" description="Add your first property to start tracking units, tenants and rent.">
+                        @can('create', \App\Models\Property::class)
+                            <x-slot name="action">
+                                <a href="{{ route('manage.properties.create') }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md shadow-sm hover:bg-navy-dark hover:shadow transition">
+                                    + Add Property
+                                </a>
+                            </x-slot>
+                        @endcan
+                    </x-empty-state>
+                @else
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        @foreach ($properties as $property)
+                            <div wire:key="property-{{ $property->id }}">
+                                <x-property-card :property="$property" />
+                            </div>
+                        @endforeach
+                    </div>
+
+                    <div class="mt-4">
+                        <x-per-page-select :paginator="$properties" />
+                    </div>
+                @endif
             </div>
         </div>
     </div>

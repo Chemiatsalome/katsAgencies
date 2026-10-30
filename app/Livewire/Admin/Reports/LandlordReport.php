@@ -13,7 +13,7 @@ class LandlordReport extends Component
 
     public function export()
     {
-        $landlord = User::role('landlord')->with('properties.blocks.houses.currentTenancy.tenant')->findOrFail($this->landlordId);
+        $landlord = User::approvedLandlords()->with('properties.blocks.houses.currentTenancy.tenant')->findOrFail($this->landlordId);
 
         return response()->streamDownload(function () use ($landlord) {
             $out = fopen('php://output', 'w');
@@ -42,7 +42,7 @@ class LandlordReport extends Component
     public function render()
     {
         return view('livewire.admin.reports.landlord', [
-            'landlords' => User::role('landlord')->orderBy('name')->get(),
+            'landlords' => User::approvedLandlords()->orderBy('name')->get(),
         ]);
     }
 }

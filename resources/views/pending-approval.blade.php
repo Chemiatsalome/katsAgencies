@@ -5,11 +5,23 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
         </div>
-        <h1 class="text-lg font-semibold text-charcoal">Your landlord application is under review</h1>
+        <h1 class="text-lg font-semibold text-charcoal">Your account isn't active yet</h1>
         <p class="text-sm text-brand-slate">
-            Thanks for signing up with Kats Agencies. An administrator will review your application shortly and activate
-            your account. You'll be able to sign in and start listing your properties as soon as it's approved.
+            If you just signed up, an administrator will review your application shortly and activate your account —
+            you'll be able to sign in and start listing your properties as soon as it's approved. If your account was
+            previously active, it may have been deactivated by an administrator.
         </p>
+        @php $contact = \App\Models\Setting::get('org_contact_email'); @endphp
+        @if ($contact)
+            <p class="text-sm text-brand-slate">
+                Questions? Contact your administrator at
+                <a href="mailto:{{ $contact }}" class="text-teal hover:underline">{{ $contact }}</a>.
+            </p>
+        @endif
         <livewire:layout.logout-button />
+
+        <p class="text-center text-sm mt-2">
+            <a href="{{ route('home') }}" wire:navigate class="text-brand-slate hover:text-charcoal">← {{ __('Back to home') }}</a>
+        </p>
     </div>
 </x-guest-layout>

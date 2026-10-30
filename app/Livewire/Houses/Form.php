@@ -49,8 +49,23 @@ class Form extends Component
             $this->status = $house->status;
             $this->description = (string) $house->description;
         } else {
-            $this->authorize('create', House::class);
+            $this->authorize('create', [House::class, $block]);
             $this->block = $block;
+        }
+    }
+
+    /**
+     * Only the explicitly numbered types (one/two/three/four bedroom) imply
+     * a bedroom count — switching to one of those always sets it to match,
+     * same as picking it fresh. Anything else (including 'other') is left
+     * alone so a manually entered value is never silently overwritten.
+     */
+    public function updatedType(): void
+    {
+        $implied = House::bedroomsImpliedByType($this->type);
+
+        if ($implied !== null) {
+            $this->bedrooms = $implied;
         }
     }
 
@@ -63,15 +78,22 @@ class Form extends Component
                     ->where('block_id', $this->block->id)
                     ->ignore($this->house?->id),
             ],
-            'type' => ['required', 'in:bedsitter,one_bedroom,two_bedroom,main_house,sq,other'],
+            'type' => ['required', Rule::in(House::TYPES)],
             'bedrooms' => ['nullable', 'integer', 'min:0', 'max:20'],
             'monthly_rent' => ['required', 'numeric', 'min:0'],
             'deposit_amount' => ['required', 'numeric', 'min:0'],
             'electricity_arrangement' => ['required', 'in:shared,separate_meter,included'],
             'water_arrangement' => ['required', 'in:shared,separate_meter,included'],
-            'status' => ['required', 'in:vacant,occupied'],
+            'status' => ['required', 'in:vacant,occupied,reserved,pending_approval,under_maintenance,unavailable'],
             'description' => ['nullable', 'string'],
         ]);
+
+        if ($this->house && ! in_array($this->house->status, ['vacant', 'occupied'], true)) {
+            // Reserved/under-maintenance/etc. are set by the tenancy and
+            // invitation workflows — an unrelated field edit here shouldn't
+            // silently overwrite that system-managed state.
+            unset($data['status']);
+        }
 
         if ($this->house) {
             $this->house->update($data);

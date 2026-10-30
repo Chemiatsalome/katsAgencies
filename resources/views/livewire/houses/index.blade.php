@@ -10,7 +10,7 @@
                     <h2 class="font-semibold text-xl text-charcoal leading-tight">Houses</h2>
                 </div>
                 @can('create', \App\Models\House::class)
-                    <a href="{{ route('manage.houses.create', $block) }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                    <a href="{{ route('manage.houses.create', $block) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
                         + Add House
                     </a>
                 @endcan
@@ -18,8 +18,15 @@
         </x-slot>
 
         <div class="py-8">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+                @if (session('status'))
+                    <div class="bg-teal/10 border border-teal/30 text-charcoal text-sm rounded-md px-4 py-3">
+                        {{ session('status') }}
+                    </div>
+                @endif
+
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -52,17 +59,18 @@
                                     <td class="px-5 py-3 text-right space-x-3">
                                         <a href="{{ route('manage.houses.edit', $house) }}" wire:navigate class="text-brand-slate hover:text-charcoal">Edit</a>
                                         @can('delete', $house)
-                                            <button wire:click="delete({{ $house->id }})" wire:confirm="Delete this house?" class="text-danger hover:text-danger/80">Delete</button>
+                                            <button wire:click="delete({{ $house->id }})" wire:confirm="Delete this house and its tenancy/rent history? This can't be undone." class="text-danger hover:text-danger/80">Delete</button>
                                         @endcan
                                     </td>
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="6" class="px-5 py-6 text-center text-gray-400">No houses yet.</td>
+                                    <td colspan="6" class="px-5 py-6 text-center text-brand-slate">No houses yet.</td>
                                 </tr>
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
         </div>

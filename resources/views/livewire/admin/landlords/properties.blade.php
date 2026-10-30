@@ -6,9 +6,25 @@
         <div class="p-6 space-y-4">
             <p class="text-sm text-brand-slate max-w-2xl">Every property registered on the platform, across all landlords — read-only oversight.</p>
 
-            <input type="text" wire:model.live.debounce.400ms="search" placeholder="Search by property name…" class="rounded-md border-brand-border text-sm" />
+            <div class="flex flex-wrap items-center gap-3">
+                <input type="text" wire:model.live.debounce.400ms="search" placeholder="Search by property name…" class="rounded-md border-brand-border text-sm w-64" />
+
+                <select wire:model.live="landlordId" class="rounded-md border-brand-border text-sm">
+                    <option value="all">All Landlords</option>
+                    @foreach ($landlords as $landlord)
+                        <option value="{{ $landlord->id }}">{{ $landlord->name }}</option>
+                    @endforeach
+                </select>
+
+                <select wire:model.live="status" class="rounded-md border-brand-border text-sm">
+                    <option value="all">All Statuses</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                </select>
+            </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -41,6 +57,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <div>{{ $properties->links() }}</div>

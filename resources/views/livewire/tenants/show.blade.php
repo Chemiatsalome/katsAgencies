@@ -8,7 +8,7 @@
                     <h2 class="font-semibold text-xl text-charcoal leading-tight">{{ $tenant->name }}</h2>
                     <p class="text-sm text-brand-slate">{{ $tenant->phone }} @if($tenant->email) · {{ $tenant->email }} @endif</p>
                 </div>
-                <a href="{{ route('manage.tenants.edit', $tenant) }}" wire:navigate class="inline-flex items-center px-4 py-2 border border-brand-border text-charcoal text-sm font-medium rounded-md hover:bg-offwhite">
+                <a href="{{ route('manage.tenants.edit', $tenant) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-brand-border text-charcoal text-xs sm:text-sm font-medium rounded-md hover:bg-offwhite">
                     Edit Tenant
                 </a>
             </div>
@@ -55,6 +55,7 @@
                 </div>
             @elseif ($tab === 'payments')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -77,9 +78,11 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'arrears')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -102,9 +105,11 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'complaints')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -125,11 +130,13 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'documents')
                 <livewire:documents.manager :model="$tenant" :key="'docs-tenant-'.$tenant->id" />
             @elseif ($tab === 'activity')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -154,6 +161,7 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @endif
         </div>

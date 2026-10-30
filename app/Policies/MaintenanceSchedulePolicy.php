@@ -9,26 +9,30 @@ class MaintenanceSchedulePolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, MaintenanceSchedule $schedule): bool
     {
-        return $schedule->property->landlord_id === $user->id;
+        return MaintenanceSchedule::accessibleBy($user)->whereKey($schedule->id)->exists();
     }
 
     public function create(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasManagerPermission('maintenance.schedule');
     }
 
     public function update(User $user, MaintenanceSchedule $schedule): bool
     {
-        return $schedule->property->landlord_id === $user->id;
+        if (! MaintenanceSchedule::accessibleBy($user)->whereKey($schedule->id)->exists()) {
+            return false;
+        }
+
+        return $user->hasRole('landlord') || $user->hasManagerPermission('maintenance.schedule');
     }
 
     public function delete(User $user, MaintenanceSchedule $schedule): bool
     {
-        return $schedule->property->landlord_id === $user->id;
+        return $user->hasRole('landlord') && MaintenanceSchedule::accessibleBy($user)->whereKey($schedule->id)->exists();
     }
 }

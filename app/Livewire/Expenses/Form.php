@@ -14,6 +14,8 @@ use Livewire\Attributes\Layout;
 #[Layout('layouts.admin')]
 class Form extends Component
 {
+    public ?Expense $expense = null;
+
     public ?int $property_id = null;
 
     public ?int $block_id = null;
@@ -30,10 +32,30 @@ class Form extends Component
 
     public string $description = '';
 
-    public function mount(): void
+    public function mount(?Expense $expense = null): void
     {
-        $this->authorize('create', Expense::class);
-        $this->expense_date = now()->format('Y-m-d');
+        if ($expense?->exists) {
+            $this->authorize('update', $expense);
+            $this->expense = $expense;
+            $this->property_id = $expense->property_id;
+            $this->block_id = $expense->block_id;
+            $this->house_id = $expense->house_id;
+            $this->expense_category_id = $expense->expense_category_id;
+            $this->vendor = (string) $expense->vendor;
+            $this->amount = (string) $expense->amount;
+            $this->expense_date = $expense->expense_date->format('Y-m-d');
+            $this->description = (string) $expense->description;
+        } else {
+            $this->authorize('create', Expense::class);
+            $this->expense_date = now()->format('Y-m-d');
+
+            if (request()->query('property_id')) {
+                $property = Property::find((int) request()->query('property_id'));
+                if ($property) {
+                    $this->property_id = $property->id;
+                }
+            }
+        }
     }
 
     public function updatedPropertyId(): void
@@ -58,11 +80,15 @@ class Form extends Component
         $property = Property::findOrFail($data['property_id']);
         $this->authorize('update', $property);
 
-        $data['recorded_by'] = Auth::id();
+        if ($this->expense) {
+            $this->expense->update($data);
+            session()->flash('status', 'Expense updated.');
+        } else {
+            $data['recorded_by'] = Auth::id();
+            Expense::create($data);
+            session()->flash('status', 'Expense recorded.');
+        }
 
-        Expense::create($data);
-
-        session()->flash('status', 'Expense recorded.');
         $this->redirectRoute('manage.expenses.index', navigate: true);
     }
 
@@ -70,11 +96,19 @@ class Form extends Component
     {
         $landlordId = Auth::id();
 
+        $categories = ExpenseCategory::active()->orderBy('name')->get();
+        if ($this->expense_category_id && ! $categories->contains('id', $this->expense_category_id)) {
+            // The category this expense was originally tagged with has since
+            // been deactivated — keep it selectable here so editing other
+            // fields doesn't silently reassign it to whatever sorts first.
+            $categories = $categories->push(ExpenseCategory::find($this->expense_category_id))->filter()->sortBy('name')->values();
+        }
+
         return view('livewire.expenses.form', [
             'properties' => Property::forLandlord($landlordId)->orderBy('name')->get(),
             'blocks' => $this->property_id ? Block::where('property_id', $this->property_id)->orderBy('name')->get() : collect(),
             'houses' => $this->block_id ? House::where('block_id', $this->block_id)->orderBy('house_number')->get() : collect(),
-            'categories' => ExpenseCategory::active()->orderBy('name')->get(),
+            'categories' => $categories,
         ]);
     }
 }

@@ -23,7 +23,8 @@ class Show extends Component
 
     public function render()
     {
-        $currentTenancy = $this->tenant->tenancies()->active()->with('house.block.property')->first();
+        $currentTenancy = $this->tenant->currentTenancy();
+        $currentTenancy?->load('house.block.property');
 
         $data = ['currentTenancy' => $currentTenancy];
 

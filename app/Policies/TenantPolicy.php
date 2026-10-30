@@ -9,7 +9,7 @@ class TenantPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, Tenant $tenant): bool
@@ -18,28 +18,26 @@ class TenantPolicy
             return true;
         }
 
-        return $this->belongsToLandlord($user, $tenant);
+        return Tenant::accessibleBy($user)->whereKey($tenant->id)->exists();
     }
 
     public function create(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenants.create');
     }
 
     public function update(User $user, Tenant $tenant): bool
     {
-        return $this->belongsToLandlord($user, $tenant);
+        if (! Tenant::accessibleBy($user)->whereKey($tenant->id)->exists()) {
+            return false;
+        }
+
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenants.edit');
     }
 
     public function delete(User $user, Tenant $tenant): bool
     {
-        return $this->belongsToLandlord($user, $tenant);
-    }
-
-    private function belongsToLandlord(User $user, Tenant $tenant): bool
-    {
-        return $tenant->tenancies()
-            ->whereHas('house.block.property', fn ($query) => $query->where('landlord_id', $user->id))
-            ->exists();
+        // Deleting a tenant record outright is never delegable to a manager.
+        return $user->hasRole('landlord') && Tenant::accessibleBy($user)->whereKey($tenant->id)->exists();
     }
 }

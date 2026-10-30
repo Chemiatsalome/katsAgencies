@@ -57,10 +57,10 @@ class Form extends Component
 
     public function render()
     {
-        $landlordId = Auth::id();
+        $user = Auth::user();
 
         return view('livewire.applications.form', [
-            'properties' => Property::forLandlord($landlordId)->orderBy('name')->get(),
+            'properties' => Property::accessibleBy($user)->orderBy('name')->get(),
             'houses' => $this->desired_property_id
                 ? House::whereHas('block', fn ($q) => $q->where('property_id', $this->desired_property_id))->vacant()->get()
                 : collect(),

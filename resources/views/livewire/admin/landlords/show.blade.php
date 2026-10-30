@@ -32,6 +32,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Properties</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -58,6 +59,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border">

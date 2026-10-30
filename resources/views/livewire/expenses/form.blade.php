@@ -1,6 +1,6 @@
     <div>
         <x-slot name="header">
-            <h2 class="font-semibold text-xl text-charcoal leading-tight">Add Expense</h2>
+            <h2 class="font-semibold text-xl text-charcoal leading-tight">{{ $expense ? 'Edit Expense' : 'Add Expense' }}</h2>
         </x-slot>
 
         <div class="p-6">
@@ -77,7 +77,7 @@
                 </div>
 
                 <div class="flex items-center gap-3">
-                    <x-primary-button type="submit">Save Expense</x-primary-button>
+                    <x-primary-button type="submit">{{ $expense ? 'Update Expense' : 'Save Expense' }}</x-primary-button>
                     <a href="{{ route('manage.expenses.index') }}" wire:navigate class="text-sm text-brand-slate hover:text-charcoal">Cancel</a>
                 </div>
             </form>

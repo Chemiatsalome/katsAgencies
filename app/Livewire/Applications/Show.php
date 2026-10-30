@@ -4,8 +4,8 @@ namespace App\Livewire\Applications;
 
 use App\Models\Application;
 use App\Models\House;
-use App\Models\Tenancy;
 use App\Models\Tenant;
+use App\Services\TenancyProvisioningService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
@@ -54,7 +54,18 @@ class Show extends Component
     public function updateStatus(string $status): void
     {
         $this->authorize('update', $this->application);
+
+        abort_unless(in_array($status, ['submitted', 'under_review', 'more_info_required', 'rejected', 'withdrawn'], true), 422);
+
         $this->application->update(['status' => $status, 'reviewed_by' => Auth::id(), 'reviewed_at' => now()]);
+
+        session()->flash('status', match ($status) {
+            'under_review' => 'Marked as under review.',
+            'more_info_required' => 'More information requested from the applicant.',
+            'rejected' => 'Application rejected.',
+            'withdrawn' => 'Application marked as withdrawn.',
+            default => 'Status updated.',
+        });
     }
 
     public function approveAndConvert(): void
@@ -71,18 +82,23 @@ class Show extends Component
         $house = House::findOrFail($this->house_id);
         $this->authorize('update', $house);
 
+        if ($house->status !== 'vacant') {
+            $this->addError('house_id', 'This unit is no longer vacant — it may have just been let to someone else.');
+
+            return;
+        }
+
         $tenant = Tenant::firstOrCreate(
             ['phone' => $this->application->applicant_phone],
             ['name' => $this->application->applicant_name, 'email' => $this->application->applicant_email]
         );
 
-        $tenancy = Tenancy::create([
-            'tenant_id' => $tenant->id,
+        $tenancy = app(TenancyProvisioningService::class)->createTenancyForExistingTenant($tenant, [
             'house_id' => $house->id,
             'move_in_date' => $this->move_in_date,
             'monthly_rent' => $this->monthly_rent,
             'deposit_required' => $this->deposit_required,
-            'status' => 'active',
+            'rent_due_day' => $tenant->payment_due_day,
         ]);
 
         $this->application->update([

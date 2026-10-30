@@ -9,7 +9,7 @@ class ComplaintPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, Complaint $complaint): bool
@@ -18,7 +18,7 @@ class ComplaintPolicy
             return true;
         }
 
-        return $this->belongsToLandlord($user, $complaint);
+        return Complaint::accessibleBy($user)->whereKey($complaint->id)->exists();
     }
 
     public function create(User $user): bool
@@ -28,24 +28,15 @@ class ComplaintPolicy
 
     public function update(User $user, Complaint $complaint): bool
     {
-        return $this->belongsToLandlord($user, $complaint);
+        if (! Complaint::accessibleBy($user)->whereKey($complaint->id)->exists()) {
+            return false;
+        }
+
+        return $user->hasRole('landlord') || $user->hasManagerPermission('complaints.respond');
     }
 
     public function delete(User $user, Complaint $complaint): bool
     {
-        return $this->belongsToLandlord($user, $complaint);
-    }
-
-    private function belongsToLandlord(User $user, Complaint $complaint): bool
-    {
-        if ($complaint->house) {
-            return $complaint->house->block->property->landlord_id === $user->id;
-        }
-
-        if ($complaint->property) {
-            return $complaint->property->landlord_id === $user->id;
-        }
-
-        return false;
+        return $user->hasRole('landlord') && Complaint::accessibleBy($user)->whereKey($complaint->id)->exists();
     }
 }

@@ -4,6 +4,7 @@ namespace App\Livewire\Tenants;
 
 use App\Models\Block;
 use App\Models\Property;
+use App\Models\Tenancy;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Url;
@@ -30,6 +31,13 @@ class Index extends Component
     #[Url]
     public int $perPage = 25;
 
+    // TenantPolicy::viewAny() passes for any manager — the landlord-granted
+    // tenants.view permission is the real gate, same as Contracts/Arrears.
+    public function mount(): void
+    {
+        abort_unless(Auth::user()->hasManagerPermission('tenants.view'), 403);
+    }
+
     public function updatedPropertyId(): void
     {
         $this->blockId = 'all';
@@ -39,24 +47,26 @@ class Index extends Component
     public function delete(Tenant $tenant): void
     {
         $this->authorize('delete', $tenant);
+
+        if ($tenant->tenancies()->whereIn('status', Tenancy::OCCUPYING_STATUSES)->exists()) {
+            session()->flash('status', 'This tenant has an active tenancy — end the tenancy before deleting their record.');
+
+            return;
+        }
+
         $tenant->delete();
     }
 
     public function render()
     {
         $user = Auth::user();
-        $isAdmin = $user->hasRole('admin');
 
-        $propertiesQuery = $isAdmin ? Property::query() : Property::forLandlord($user->id);
-        $properties = $propertiesQuery->orderBy('name')->get(['id', 'name']);
+        $properties = Property::accessibleBy($user)->orderBy('name')->get(['id', 'name']);
 
-        $blocksQuery = Block::query()->when(
+        $blocksQuery = Block::accessibleBy($user)->when(
             $this->propertyId !== 'all',
             fn ($q) => $q->where('property_id', $this->propertyId)
         );
-        if (! $isAdmin) {
-            $blocksQuery->whereHas('property', fn ($q) => $q->where('landlord_id', $user->id));
-        }
         $blocks = $blocksQuery->orderBy('name')->get(['id', 'name', 'property_id']);
 
         // Which tenancy represents each tenant's row in the table: whatever
@@ -76,11 +86,8 @@ class Index extends Component
                 'tenancies.house',
                 fn ($q2) => $q2->where('block_id', $this->blockId)
             ))
-            ->latest();
-
-        if (! $isAdmin) {
-            $query->whereHas('tenancies.house.block.property', fn ($q) => $q->where('landlord_id', $user->id));
-        }
+            ->latest()
+            ->accessibleBy($user);
 
         return view('livewire.tenants.index', [
             'tenants' => $query->paginate($this->perPage),

@@ -57,7 +57,7 @@
             @forelse ($payments as $payment)
                 <tr>
                     <td>{{ $payment->payment_date->format('d M Y') }}</td>
-                    <td>{{ ucfirst($payment->method) }}</td>
+                    <td>{{ $payment->isOpeningBalance() ? 'Historical balance (not a transaction)' : ucfirst($payment->method) }}</td>
                     <td>{{ $payment->reference_number ?? '—' }}</td>
                     <td class="right">KSh {{ number_format($payment->amount, 2) }}</td>
                 </tr>

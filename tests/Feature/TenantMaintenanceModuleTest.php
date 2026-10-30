@@ -34,7 +34,7 @@ class TenantMaintenanceModuleTest extends TestCase
 
     public function test_tenant_can_submit_a_maintenance_request_with_a_photo_and_landlord_is_notified(): void
     {
-        Storage::fake('public');
+        Storage::fake('local');
         $this->seed();
 
         $user = $this->makeTenantUser();

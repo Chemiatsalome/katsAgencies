@@ -42,6 +42,11 @@ class MaintenanceSchedule extends Model
         return $query->where('is_active', true)->where('next_due_date', '<=', now()->toDateString());
     }
 
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        return $query->whereHas('property', fn (Builder $q) => $q->accessibleBy($user));
+    }
+
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()

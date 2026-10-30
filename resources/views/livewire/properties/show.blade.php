@@ -1,4 +1,8 @@
     <div>
+        @if ($justOnboarded)
+            @push('header-back-url'){{ route('manage.properties.index') }}@endpush
+        @endif
+
         <x-slot name="header">
             <div class="flex items-center justify-between">
                 <div>
@@ -8,13 +12,56 @@
                     <h2 class="font-semibold text-xl text-charcoal leading-tight">{{ $property->name }}</h2>
                     <p class="text-sm text-brand-slate">{{ $property->address }}</p>
                 </div>
-                <a href="{{ route('manage.properties.edit', $property) }}" wire:navigate class="inline-flex items-center px-4 py-2 border border-brand-border text-charcoal text-sm font-medium rounded-md hover:bg-offwhite">
+                <a href="{{ route('manage.properties.edit', $property) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-brand-border text-charcoal text-xs sm:text-sm font-medium rounded-md hover:bg-offwhite">
                     Edit Property
                 </a>
             </div>
         </x-slot>
 
         <div class="p-6 space-y-6">
+            <div class="rounded-xl overflow-hidden shadow-sm h-40 sm:h-56">
+                <x-property-photo :property="$property" />
+            </div>
+
+            @php
+                $vacantTenancyCreateUrl = route('manage.tenancies.create', $onlyVacantHouseId
+                    ? ['house_id' => $onlyVacantHouseId]
+                    : ['property_id' => $property->id]);
+            @endphp
+
+            @if ($justOnboarded)
+                <div x-data="{ dismissed: false }" x-show="!dismissed" class="bg-teal/10 border border-teal/30 rounded-lg px-5 py-4 flex items-center justify-between flex-wrap gap-3">
+                    <div>
+                        <p class="text-sm font-semibold text-charcoal">Your property has been added. Would you like to add tenants now?</p>
+                        <p class="text-xs text-brand-slate mt-0.5">Units are ready and vacant — you can add a tenant directly or send them an invitation to register themselves. You can also skip this and come back anytime.</p>
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0">
+                        <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
+                            Add a tenant now
+                        </a>
+                        <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-white">
+                            Invite a tenant
+                        </a>
+                        <button type="button" @click="dismissed = true" class="text-xs text-brand-slate hover:text-charcoal">I'll do this later</button>
+                    </div>
+                </div>
+            @elseif ($vacantUnits > 0)
+                {{-- Not tied to any one tab or visit — every time this property has a vacant unit, adding a tenant for it should be one click away, not something the landlord has to go hunting for. --}}
+                <div class="bg-white border border-warning/30 rounded-lg px-5 py-3 flex items-center justify-between flex-wrap gap-3">
+                    <p class="text-sm text-charcoal">
+                        <span class="font-semibold">{{ $vacantUnits }}</span> {{ Str::plural('unit', $vacantUnits) }} {{ $vacantUnits === 1 ? 'is' : 'are' }} currently vacant on this property.
+                    </p>
+                    <div class="flex items-center gap-3 shrink-0">
+                        <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
+                            Add a tenant
+                        </a>
+                        <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-offwhite">
+                            Invite a tenant
+                        </a>
+                    </div>
+                </div>
+            @endif
+
             <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <x-stat-tile label="Units" :value="$totalUnits" />
                 <x-stat-tile label="Occupied" :value="$occupiedUnits" tone="good" />
@@ -52,7 +99,23 @@
                     </div>
                 </div>
             @elseif ($tab === 'units')
+                <div class="flex items-center justify-end">
+                    @if ($blocks->count() === 1)
+                        @can('create', [\App\Models\House::class, $blocks->first()])
+                            <a href="{{ route('manage.houses.create', $blocks->first()) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
+                                + Add Unit
+                            </a>
+                        @endcan
+                    @elseif ($blocks->count() > 1)
+                        @can('create', \App\Models\House::class)
+                            <a href="{{ route('manage.blocks.index', $property) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
+                                + Add Unit (choose a block)
+                            </a>
+                        @endcan
+                    @endif
+                </div>
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -79,9 +142,11 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'tenants')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -100,13 +165,29 @@
                                     <td class="px-5 py-2.5 {{ $tenancy->balance() > 0 ? 'text-danger' : 'text-brand-slate' }}">KSh {{ number_format($tenancy->balance()) }}</td>
                                 </tr>
                             @empty
-                                <tr><td colspan="3" class="px-5 py-6 text-center text-gray-400">No tenants yet.</td></tr>
+                                <tr>
+                                    <td colspan="3" class="px-5 py-8 text-center text-gray-400">
+                                        @if ($vacantUnits > 0)
+                                            No tenants yet.
+                                            <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="text-teal hover:underline">Add one of your {{ $vacantUnits }} vacant {{ Str::plural('unit', $vacantUnits) }} now →</a>
+                                        @else
+                                            No tenants yet.
+                                        @endif
+                                    </td>
+                                </tr>
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'rent')
+                <div class="flex items-center justify-end">
+                    <a href="{{ route('manage.rent-charges.index', ['propertyId' => $property->id]) }}" wire:navigate class="text-sm text-teal hover:underline">
+                        Open full rent ledger for this property →
+                    </a>
+                </div>
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -131,9 +212,19 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'expenses')
+                <div class="flex items-center justify-between">
+                    <a href="{{ route('manage.expenses.index', ['propertyId' => $property->id]) }}" wire:navigate class="text-sm text-teal hover:underline">
+                        View all expenses for this property →
+                    </a>
+                    <a href="{{ route('manage.expenses.create', ['property_id' => $property->id]) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
+                        + Record Expense
+                    </a>
+                </div>
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -156,9 +247,16 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'maintenance')
+                <div class="flex items-center justify-end">
+                    <a href="{{ route('manage.maintenance.index', ['propertyId' => $property->id]) }}" wire:navigate class="text-sm text-teal hover:underline">
+                        Open maintenance for this property →
+                    </a>
+                </div>
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -181,9 +279,11 @@
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'contracts')
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                    <div class="overflow-x-auto">
                     <table class="min-w-full text-sm">
                         <thead class="bg-gray-50 text-brand-slate">
                             <tr>
@@ -204,10 +304,20 @@
                                     <td class="px-5 py-2.5"><x-status-badge :status="$tenancy->status" /></td>
                                 </tr>
                             @empty
-                                <tr><td colspan="4" class="px-5 py-6 text-center text-gray-400">No tenancies yet.</td></tr>
+                                <tr>
+                                    <td colspan="4" class="px-5 py-8 text-center text-gray-400">
+                                        @if ($vacantUnits > 0)
+                                            A tenancy needs to exist before a contract can be generated for it.
+                                            <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="text-teal hover:underline">Add a tenant first →</a>
+                                        @else
+                                            A tenancy needs to exist before a contract can be generated for it.
+                                        @endif
+                                    </td>
+                                </tr>
                             @endforelse
                         </tbody>
                     </table>
+                    </div>
                 </div>
             @elseif ($tab === 'documents')
                 <livewire:documents.manager :model="$property" :key="'docs-'.$property->id" />
@@ -235,7 +345,7 @@
                             </ul>
                         </div>
                     @endif
-                    <a href="{{ route('manage.analytics.performance') }}" wire:navigate class="inline-block text-sm text-teal hover:underline">View full ROI &amp; performance analytics →</a>
+                    <a href="{{ route('manage.analytics.performance') }}" wire:navigate class="inline-block text-sm text-teal hover:underline">View ROI &amp; performance analytics across all properties →</a>
                 </div>
             @endif
         </div>

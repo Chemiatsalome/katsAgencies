@@ -2,9 +2,11 @@
         <x-slot name="header">
             <div class="flex items-center justify-between">
                 <h2 class="font-semibold text-xl text-charcoal leading-tight">My Requests</h2>
-                <a href="{{ route('tenant.maintenance.create') }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
-                    + New Request
-                </a>
+                @if ($hasActiveTenancy)
+                    <a href="{{ route('tenant.maintenance.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
+                        + New Request
+                    </a>
+                @endif
             </div>
         </x-slot>
 
@@ -22,7 +24,7 @@
                             $rawStatus = $task->status ?? $complaint->status;
                             $displayStatus = \App\Livewire\Tenant\Maintenance\Index::STATUS_MAP[$rawStatus] ?? $rawStatus;
                         @endphp
-                        <div wire:key="complaint-{{ $complaint->id }}" class="bg-white shadow-sm rounded-lg border border-brand-border p-5">
+                        <a href="{{ route('tenant.maintenance.show', $complaint) }}" wire:navigate wire:key="complaint-{{ $complaint->id }}" class="block bg-white shadow-sm rounded-lg border border-brand-border p-5 hover:border-teal/40 transition">
                             <div class="flex items-start justify-between gap-3">
                                 <div>
                                     <p class="text-sm font-semibold text-charcoal">{{ $complaint->subject }}</p>
@@ -30,7 +32,12 @@
                                         {{ ucfirst($complaint->category) }} · {{ $complaint->house->house_number ?? '' }}
                                     </p>
                                 </div>
-                                <x-status-badge :status="$displayStatus" />
+                                <div class="text-right">
+                                    <x-status-badge :status="$displayStatus" />
+                                    @if ($complaint->awaitingTenantConfirmation())
+                                        <span class="block mt-1 text-xs text-warning font-medium whitespace-nowrap">Confirm it's fixed?</span>
+                                    @endif
+                                </div>
                             </div>
 
                             <p class="text-sm text-brand-slate mt-2">{{ $complaint->description }}</p>
@@ -43,8 +50,11 @@
                                 @if ($complaint->resolved_at)
                                     <span>Resolved: {{ $complaint->resolved_at->format('d M Y') }}</span>
                                 @endif
+                                @if ($complaint->updates_count > 0)
+                                    <span class="text-teal">{{ $complaint->updates_count }} update{{ $complaint->updates_count === 1 ? '' : 's' }}</span>
+                                @endif
                             </div>
-                        </div>
+                        </a>
                     @empty
                         <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-center text-gray-400">
                             You haven't submitted any maintenance requests yet.

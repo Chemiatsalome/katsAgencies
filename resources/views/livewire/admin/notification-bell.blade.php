@@ -17,12 +17,24 @@
         </div>
         <div class="max-h-80 overflow-y-auto divide-y divide-brand-border">
             @forelse ($recent as $notification)
-                <div class="px-4 py-3">
+                @php
+                    $isMineAndUnread = $notification->notifiable_type === \App\Models\User::class
+                        && $notification->notifiable_id === auth()->id()
+                        && ! $notification->read_at;
+                    $actionUrl = $notification->actionUrl();
+                @endphp
+                <div class="px-4 py-3 {{ $isMineAndUnread ? 'bg-offwhite' : '' }}">
                     <div class="flex items-center justify-between gap-2">
                         <p class="text-sm font-medium text-charcoal">{{ $notification->title }}</p>
                         <x-status-badge :status="$notification->status" />
                     </div>
-                    <p class="text-xs text-brand-slate mt-0.5">{{ $notification->created_at->diffForHumans() }} · {{ ucfirst($notification->channel) }}</p>
+                    <p class="text-xs text-brand-slate mt-0.5">{{ $notification->body }}</p>
+                    <div class="flex items-center justify-between mt-0.5">
+                        <p class="text-xs text-brand-slate">{{ $notification->created_at->diffForHumans() }} · {{ ucfirst($notification->channel) }}</p>
+                        @if ($actionUrl)
+                            <a href="{{ $actionUrl }}" wire:navigate class="text-xs text-teal hover:underline shrink-0">View →</a>
+                        @endif
+                    </div>
                 </div>
             @empty
                 <p class="px-4 py-6 text-sm text-brand-slate text-center">No notifications yet.</p>

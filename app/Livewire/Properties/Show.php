@@ -16,10 +16,14 @@ class Show extends Component
     #[Url]
     public string $tab = 'overview';
 
+    /** True only on the one request right after the onboarding wizard redirects here — drives the "add tenants now?" banner. */
+    public bool $justOnboarded = false;
+
     public function mount(Property $property): void
     {
         $this->authorize('view', $property);
         $this->property = $property;
+        $this->justOnboarded = request()->boolean('onboarded');
     }
 
     public function render()
@@ -40,6 +44,15 @@ class Show extends Component
             'expenses' => $service->expenses(collect([$this->property->id]), now()->startOfMonth(), now()->endOfMonth()),
         ];
         $data['netIncome'] = $data['collectedRent'] - $data['expenses'];
+
+        // Needed on every tab, not just right after onboarding — a vacant
+        // unit should be instantly actionable from the dashboard any time
+        // the landlord comes back to it, not only in the one-time banner.
+        $vacantHouses = \App\Models\House::whereIn('id', $houseIds)->vacant()->orderBy('house_number')->get(['id', 'house_number']);
+        $data['vacantHouses'] = $vacantHouses;
+        $data['onlyVacantHouseId'] = $vacantHouses->count() === 1 ? $vacantHouses->first()->id : null;
+
+        $data['blocks'] = $this->property->blocks()->withCount('houses')->orderBy('name')->get();
 
         match ($this->tab) {
             'units' => $data['houses'] = $this->property->houses()->with('currentTenancy.tenant')->orderBy('house_number')->get(),

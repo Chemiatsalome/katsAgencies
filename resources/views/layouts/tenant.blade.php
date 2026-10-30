@@ -7,6 +7,10 @@
 
         <title>{{ config('app.name', 'Kats Agencies') }}</title>
 
+        <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+        <link rel="icon" type="image/png" href="{{ asset('favicon.png') }}">
+        <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
+
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=figtree:400,500,600,700&display=swap" rel="stylesheet" />
 
@@ -19,8 +23,8 @@
             <!-- Mobile sidebar overlay -->
             <div x-show="mobileNavOpen" x-cloak class="fixed inset-0 z-40 lg:hidden">
                 <div class="absolute inset-0 bg-charcoal/50" @click="mobileNavOpen = false"></div>
-                <div class="relative w-64 h-full bg-navy text-white overflow-y-auto" x-data="{ collapsed: false }">
-                    @include('layouts.partials.tenant-sidebar')
+                <div class="relative w-64 h-full bg-navy text-white overflow-y-auto">
+                    @include('layouts.partials.tenant-sidebar', ['persistKey' => 'tenant-sidebar-mobile', 'mobile' => true])
                 </div>
             </div>
 
@@ -49,7 +53,7 @@
                                 </button>
                             </x-slot>
                             <x-slot name="content">
-                                <x-dropdown-link :href="route('profile')" wire:navigate>Profile</x-dropdown-link>
+                                <x-dropdown-link :href="route('tenant.profile')" wire:navigate>Profile</x-dropdown-link>
                                 <livewire:layout.logout-button />
                             </x-slot>
                         </x-dropdown>
@@ -58,7 +62,39 @@
 
                 @if (isset($header))
                     <div class="bg-white border-b border-brand-border px-4 lg:px-6 py-5">
-                        {{ $header }}
+                        <div class="flex items-start gap-3">
+                            <button
+                                onclick="window.history.length > 1 ? window.history.back() : (window.location.href = '{{ route('dashboard') }}')"
+                                class="shrink-0 mt-0.5 p-1.5 rounded-md text-brand-slate hover:text-navy hover:bg-offwhite"
+                                title="Back"
+                            >
+                                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                                </svg>
+                            </button>
+                            <div class="flex-1 min-w-0">
+                                {{ $header }}
+                            </div>
+                        </div>
+                    </div>
+                @endif
+
+                @php
+                    $activeTenancy = auth()->user()->tenant?->tenancies()->active()->latest('move_in_date')->first();
+                @endphp
+                @if ($activeTenancy?->hasUnsignedContract())
+                    <div class="bg-warning/10 border-b border-warning/20 px-4 lg:px-6 py-3">
+                        <div class="flex items-center justify-between gap-4">
+                            <div>
+                                <p class="text-sm font-semibold text-charcoal">Action Required</p>
+                                @if ($activeTenancy->contract->version > 1)
+                                    <p class="text-xs text-brand-slate">Your landlord has issued a revised tenancy agreement (version {{ $activeTenancy->contract->version }}). Please review and sign the updated version.</p>
+                                @else
+                                    <p class="text-xs text-brand-slate">Your tenancy agreement has not yet been signed. Please review and sign your agreement to activate your tenancy.</p>
+                                @endif
+                            </div>
+                            <a href="{{ route('tenant.contract') }}" wire:navigate class="shrink-0 text-xs font-medium text-white bg-navy rounded-md px-3 py-1.5 hover:bg-navy-dark">Review &amp; Sign</a>
+                        </div>
                     </div>
                 @endif
 

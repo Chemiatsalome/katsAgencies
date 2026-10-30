@@ -39,16 +39,18 @@ class Import extends Component
         ]);
 
         $user = Auth::user();
-        $isAdmin = $user->hasRole('admin');
 
-        $propertiesQuery = $isAdmin ? Property::query() : Property::forLandlord($user->id);
-        $properties = $propertiesQuery->with('blocks.houses')->get();
+        $properties = Property::accessibleBy($user)->with('blocks.houses')->get();
 
         $handle = fopen($this->file->getRealPath(), 'r');
         $header = fgetcsv($handle);
         $header = array_map(fn ($h) => strtolower(trim((string) $h, " \t\n\r\0\x0B\xEF\xBB\xBF")), $header ?: []);
 
-        $col = fn (array $row, string $name) => trim((string) ($row[array_search($name, $header)] ?? ''));
+        // array_search() returns false (not null) when a column is absent — and
+        // PHP coerces a false array key to 0, so without this explicit check a
+        // missing optional column would silently read back column 0's value
+        // instead of defaulting to ''.
+        $col = fn (array $row, string $name) => trim((string) (($i = array_search($name, $header)) === false ? '' : ($row[$i] ?? '')));
 
         $seenInFile = [];
         $rows = [];
@@ -65,6 +67,7 @@ class Import extends Component
             $phone = $col($csvRow, 'phone');
             $rent = $col($csvRow, 'rent');
             $dueDate = $col($csvRow, 'due date') ?: $col($csvRow, 'due_date') ?: '1';
+            $moveInDate = $col($csvRow, 'move in date') ?: $col($csvRow, 'move_in_date');
 
             $row = [
                 'property' => $propertyName,
@@ -74,6 +77,7 @@ class Import extends Component
                 'phone' => $phone,
                 'rent' => $rent,
                 'due_date' => $dueDate,
+                'move_in_date' => $moveInDate,
                 'bucket' => null,
                 'reason' => null,
                 'house_id' => null,
@@ -85,6 +89,24 @@ class Import extends Component
                 $rows[] = $row;
 
                 continue;
+            }
+
+            if ($moveInDate !== '') {
+                try {
+                    $parsedMoveInDate = \Illuminate\Support\Carbon::parse($moveInDate);
+                } catch (\Exception) {
+                    $parsedMoveInDate = null;
+                }
+
+                if (! $parsedMoveInDate || $parsedMoveInDate->isFuture()) {
+                    $row['bucket'] = 'invalid';
+                    $row['reason'] = "Move In Date \"{$moveInDate}\" isn't a valid past date.";
+                    $rows[] = $row;
+
+                    continue;
+                }
+
+                $row['move_in_date'] = $parsedMoveInDate->format('Y-m-d');
             }
 
             $property = $properties->first(fn (Property $p) => strcasecmp($p->name, $propertyName) === 0);
@@ -159,12 +181,15 @@ class Import extends Component
                 continue; // unit was taken by an earlier row/import since preview
             }
 
+            $landlordId = Auth::user()->landlordId();
+            $defaultDueDay = $landlordId ? (int) \App\Models\LandlordSetting::get($landlordId, 'default_rent_due_day', 5) : 5;
+
             $tenancyData = [
                 'house_id' => $house->id,
-                'move_in_date' => now()->format('Y-m-d'),
+                'move_in_date' => $row['move_in_date'] ?: now()->format('Y-m-d'),
                 'monthly_rent' => $row['rent'],
                 'deposit_required' => $house->deposit_amount,
-                'rent_due_day' => (int) ($row['due_date'] ?: 1) ?: 1,
+                'rent_due_day' => (int) ($row['due_date'] ?: $defaultDueDay) ?: $defaultDueDay,
                 'status' => 'active',
             ];
 
@@ -186,7 +211,8 @@ class Import extends Component
     public function sendInvitation(int $tenantId): void
     {
         $tenant = Tenant::findOrFail($tenantId);
-        $tenancy = $tenant->tenancies()->latest('move_in_date')->firstOrFail();
+        $tenancy = $tenant->mostRecentTenancy();
+        abort_if(! $tenancy, 404);
         $this->authorize('update', $tenancy->house);
 
         TenantInvitation::create([

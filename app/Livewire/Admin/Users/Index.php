@@ -24,14 +24,34 @@ class Index extends Component
 
     public function updateRole(int $userId, string $role): void
     {
+        abort_unless(in_array($role, ['admin', 'landlord', 'tenant'], true), 422);
+
+        if ($userId === auth()->id() && $role !== 'admin') {
+            session()->flash('status', "You can't remove your own admin role.");
+
+            return;
+        }
+
         $user = User::findOrFail($userId);
         $user->syncRoles([$role]);
+
+        session()->flash('status', "{$user->name}'s role updated to ".ucfirst($role).'.');
     }
 
     public function updateStatus(int $userId, string $status): void
     {
+        abort_unless(in_array($status, ['active', 'inactive', 'suspended'], true), 422);
+
+        if ($userId === auth()->id() && $status !== 'active') {
+            session()->flash('status', "You can't change your own account status.");
+
+            return;
+        }
+
         $user = User::findOrFail($userId);
         $user->update(['status' => $status]);
+
+        session()->flash('status', "{$user->name}'s status updated to ".ucfirst($status).'.');
     }
 
     public function resetPassword(int $userId): void

@@ -28,6 +28,11 @@ class Index extends Component
     #[Url]
     public int $perPage = 25;
 
+    public function mount(): void
+    {
+        $this->authorize('viewAny', Income::class);
+    }
+
     public function delete(int $incomeId): void
     {
         $income = Income::findOrFail($incomeId);

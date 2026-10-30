@@ -35,6 +35,11 @@ class LandlordSetting extends Model
         static::updateOrCreate(['user_id' => $userId, 'key' => $key], ['value' => Crypt::encryptString($value)]);
     }
 
+    public static function forget(int $userId, string $key): void
+    {
+        static::where('user_id', $userId)->where('key', $key)->delete();
+    }
+
     protected static function booted(): void
     {
         static::saved(fn (LandlordSetting $s) => Cache::forget("landlord_setting:{$s->user_id}:{$s->key}"));

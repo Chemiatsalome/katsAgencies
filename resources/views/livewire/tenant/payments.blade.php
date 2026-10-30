@@ -24,7 +24,7 @@
                                     <tr wire:key="payment-{{ $payment->id }}">
                                         <td class="px-5 py-3 text-charcoal">{{ $payment->payment_date->format('d M Y') }}</td>
                                         <td class="px-5 py-3 text-right text-charcoal font-medium">KSh {{ number_format($payment->amount, 2) }}</td>
-                                        <td class="px-5 py-3 text-brand-slate">{{ ucfirst($payment->method) }}</td>
+                                        <td class="px-5 py-3 text-brand-slate">{{ $payment->isOpeningBalance() ? 'Historical balance (not a transaction)' : ucfirst($payment->method) }}</td>
                                         <td class="px-5 py-3 text-brand-slate">{{ $payment->reference_number ?? '—' }}</td>
                                         <td class="px-5 py-3 text-brand-slate">
                                             @if ($payment->rentCharge)

@@ -24,6 +24,12 @@ class Statements extends Component
             ->whereIn('tenancy_id', $this->tenancyIds())
             ->findOrFail($paymentId);
 
+        // A "receipt" is proof of an actual transaction — opening_balance
+        // rows are the system's own "assume this historical month was
+        // settled" guess, not something the tenant ever paid, so generating
+        // an official-looking receipt document for one would be misleading.
+        abort_if($payment->isOpeningBalance(), 404);
+
         $pdf = Pdf::loadView('tenant.receipt', ['payment' => $payment]);
 
         return response()->streamDownload(
@@ -35,7 +41,8 @@ class Statements extends Component
     public function downloadStatement()
     {
         $tenant = Auth::user()->tenant;
-        $tenancy = $tenant?->tenancies()->with('house.block.property', 'rentCharges', 'payments')->latest('move_in_date')->first();
+        $tenancy = $tenant?->mostRecentTenancy();
+        $tenancy?->load('house.block.property', 'rentCharges', 'payments');
 
         abort_if(! $tenancy, 404);
 
@@ -55,7 +62,8 @@ class Statements extends Component
     public function render()
     {
         $tenant = Auth::user()->tenant;
-        $tenancy = $tenant?->tenancies()->with('house.block.property')->latest('move_in_date')->first();
+        $tenancy = $tenant?->mostRecentTenancy();
+        $tenancy?->load('house.block.property');
 
         return view('livewire.tenant.statements', [
             'tenancy' => $tenancy,

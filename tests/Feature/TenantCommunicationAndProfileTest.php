@@ -67,6 +67,33 @@ class TenantCommunicationAndProfileTest extends TestCase
             ->assertSee('Saturday');
     }
 
+    public function test_viewing_announcements_marks_them_read(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+        $tenant = $user->tenant;
+        $landlord = $tenant->tenancies()->active()->with('house.block.property')->first()->house->block->property->landlord;
+
+        Livewire::actingAs($landlord)
+            ->test(LandlordMessages::class)
+            ->set('scope', 'tenant')
+            ->set('tenant_id', $tenant->id)
+            ->set('subject', 'Read Tracking Test')
+            ->set('body', 'Body text')
+            ->set('channels', ['in_app'])
+            ->call('send');
+
+        $notification = AppNotification::where('event_type', 'landlord_message')
+            ->where('notifiable_id', $tenant->id)
+            ->firstOrFail();
+        $this->assertNull($notification->read_at);
+
+        Livewire::actingAs($user)->test(TenantAnnouncements::class);
+
+        $this->assertNotNull($notification->fresh()->read_at, 'Simply viewing the announcements page should mark it read — there is no per-item control here.');
+    }
+
     public function test_tenant_can_update_their_own_contact_details_and_landlord_is_notified(): void
     {
         $this->seed();

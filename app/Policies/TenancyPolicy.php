@@ -9,7 +9,7 @@ class TenancyPolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasRole('manager');
     }
 
     public function view(User $user, Tenancy $tenancy): bool
@@ -18,26 +18,28 @@ class TenancyPolicy
             return true;
         }
 
-        return $this->belongsToLandlord($user, $tenancy);
+        return Tenancy::accessibleBy($user)->whereKey($tenancy->id)->exists();
     }
 
     public function create(User $user): bool
     {
-        return $user->hasRole('landlord');
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenancies.create');
     }
 
     public function update(User $user, Tenancy $tenancy): bool
     {
-        return $this->belongsToLandlord($user, $tenancy);
+        if (! Tenancy::accessibleBy($user)->whereKey($tenancy->id)->exists()) {
+            return false;
+        }
+
+        // Terminating/ending a tenancy is gated by tenancies.terminate; other
+        // edits (e.g. rent adjustments) fall under the same permission since
+        // there's no separate "edit" checkbox in the spec's permission list.
+        return $user->hasRole('landlord') || $user->hasManagerPermission('tenancies.terminate');
     }
 
     public function delete(User $user, Tenancy $tenancy): bool
     {
-        return $this->belongsToLandlord($user, $tenancy);
-    }
-
-    private function belongsToLandlord(User $user, Tenancy $tenancy): bool
-    {
-        return $tenancy->house->block->property->landlord_id === $user->id;
+        return $user->hasRole('landlord') && Tenancy::accessibleBy($user)->whereKey($tenancy->id)->exists();
     }
 }

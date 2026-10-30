@@ -44,6 +44,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Occupancy by Landlord</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -72,7 +73,10 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
+
+            <div>{{ $byLandlord->links() }}</div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
                 <div class="px-5 py-4 border-b border-brand-border">
@@ -84,6 +88,7 @@
                         <div class="px-5 py-2 bg-navy-light">
                             <p class="text-xs font-semibold text-navy uppercase tracking-wide">{{ $landlordName }}</p>
                         </div>
+                        <div class="overflow-x-auto">
                         <table class="min-w-full text-sm">
                             <tbody class="divide-y divide-gray-100">
                                 @foreach ($properties as $row)
@@ -96,6 +101,7 @@
                                 @endforeach
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 @empty
                     <p class="px-5 py-6 text-center text-gray-400 text-sm">No properties registered yet.</p>

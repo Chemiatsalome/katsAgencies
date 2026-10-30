@@ -1,6 +1,6 @@
     <div>
         <x-slot name="header">
-            <h2 class="font-semibold text-xl text-charcoal leading-tight">Add Income</h2>
+            <h2 class="font-semibold text-xl text-charcoal leading-tight">{{ $income ? 'Edit Income' : 'Add Income' }}</h2>
         </x-slot>
 
         <div class="p-6">
@@ -46,7 +46,7 @@
                 </div>
 
                 <div class="flex items-center gap-3">
-                    <x-primary-button type="submit">Save Income</x-primary-button>
+                    <x-primary-button type="submit">{{ $income ? 'Update Income' : 'Save Income' }}</x-primary-button>
                     <a href="{{ route('manage.income.index') }}" wire:navigate class="text-sm text-brand-slate hover:text-charcoal">Cancel</a>
                 </div>
             </form>

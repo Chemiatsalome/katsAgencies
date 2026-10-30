@@ -88,24 +88,40 @@ class ReportService
         return ['columns' => ['Tenant', 'Property / House', 'Period', 'Due Date', 'Expected', 'Paid', 'Status'], 'rows' => $rows];
     }
 
+    /**
+     * One row per outstanding charge, same as before, but now split into
+     * Gross Arrears / Advance Credit Applied / Net Arrears instead of one
+     * raw "Arrears" figure — a tenant who overpaid a prior month showed up
+     * here as owing the full gross amount even though Tenancy::balance()
+     * and the Arrears page already knew better. Credit is applied oldest
+     * charge first per tenancy (Tenancy::outstandingChargesWithCredit()),
+     * the same order late-fee waiving already uses, and never crosses
+     * between tenancies.
+     */
     private function arrears(int $landlordId): array
     {
         $propertyIds = $this->propertyIdsFor($landlordId);
         $tenancyIds = $this->finance->tenancyIdsFor($propertyIds);
 
-        $rows = RentCharge::outstanding()->whereIn('tenancy_id', $tenancyIds)
-            ->with('tenancy.tenant', 'tenancy.house.block.property')
-            ->orderBy('due_date')
-            ->get()
-            ->map(fn (RentCharge $c) => [
-                $c->tenancy->tenant->name,
-                $c->tenancy->house->block->property->name.' — '.$c->tenancy->house->house_number,
-                $c->period_year.'-'.str_pad((string) $c->period_month, 2, '0', STR_PAD_LEFT),
-                $c->due_date->format('d M Y'),
-                number_format((float) $c->amount_expected - (float) $c->amount_paid, 2),
-            ])->all();
+        $tenancies = Tenancy::whereIn('id', $tenancyIds)
+            ->whereHas('rentCharges', fn ($q) => $q->outstanding())
+            ->with('tenant', 'house.block.property')
+            ->get();
 
-        return ['columns' => ['Tenant', 'Property / House', 'Period', 'Due Date', 'Arrears'], 'rows' => $rows];
+        $rows = $tenancies->flatMap(fn (Tenancy $tenancy) => $tenancy->outstandingChargesWithCredit()
+            ->map(fn (array $row) => [
+                $tenancy->tenant->name,
+                $tenancy->house->block->property->name.' — '.$tenancy->house->house_number,
+                $row['charge']->period_year.'-'.str_pad((string) $row['charge']->period_month, 2, '0', STR_PAD_LEFT),
+                $row['charge']->due_date->format('d M Y'),
+                number_format($row['gross'], 2),
+                number_format($row['credit_applied'], 2),
+                number_format($row['net'], 2),
+            ]))
+            ->values()
+            ->all();
+
+        return ['columns' => ['Tenant', 'Property / House', 'Period', 'Due Date', 'Gross Arrears', 'Advance Credit Applied', 'Net Arrears'], 'rows' => $rows];
     }
 
     private function income(int $landlordId, int $year, ?int $month): array
@@ -176,7 +192,7 @@ class ReportService
     {
         $rows = Property::forLandlord($landlordId)->get()->map(fn (Property $p) => [
             $p->name,
-            number_format($p->totalInvestment(), 2),
+            $p->totalInvestment() > 0 ? number_format($p->totalInvestment(), 2) : '—',
             number_format($p->annualGrossIncome(), 2),
             number_format($p->annualExpenses(), 2),
             number_format($p->netOperatingIncome(), 2),
@@ -252,7 +268,13 @@ class ReportService
 
     private function paymentHistory(int $landlordId, int $year, ?int $month): array
     {
-        $query = Payment::whereHas('tenancy.house.block.property', fn ($q) => $q->where('landlord_id', $landlordId))
+        // genuine() excludes opening-balance "assumed settled" backfill rows
+        // — not real cash, and every other real-money figure in the app
+        // (Cash Flow, Finance Overview, Dashboard) already excludes them.
+        // Without this, exported payment history mixes fabricated entries
+        // in with real transactions and won't reconcile with those totals.
+        $query = Payment::genuine()
+            ->whereHas('tenancy.house.block.property', fn ($q) => $q->where('landlord_id', $landlordId))
             ->whereYear('payment_date', $year)
             ->with('tenancy.tenant', 'tenancy.house.block.property');
 

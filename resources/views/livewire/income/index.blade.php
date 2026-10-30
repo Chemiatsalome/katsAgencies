@@ -36,6 +36,7 @@
             </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -55,7 +56,8 @@
                                 <td class="px-5 py-3 text-brand-slate">{{ $income->category?->name ?? '—' }}</td>
                                 <td class="px-5 py-3 text-brand-slate">{{ $income->description ?: '—' }}</td>
                                 <td class="px-5 py-3 text-right font-medium text-success">KSh {{ number_format($income->amount, 2) }}</td>
-                                <td class="px-5 py-3 text-right">
+                                <td class="px-5 py-3 text-right space-x-3">
+                                    <a href="{{ route('manage.income.edit', $income) }}" wire:navigate class="text-xs text-brand-slate hover:text-charcoal">Edit</a>
                                     <button wire:click="delete({{ $income->id }})" wire:confirm="Delete this income record?" class="text-xs text-danger hover:underline">Delete</button>
                                 </td>
                             </tr>
@@ -66,6 +68,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <x-per-page-select :paginator="$incomes" />

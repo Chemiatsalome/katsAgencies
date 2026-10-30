@@ -58,14 +58,10 @@ class Index extends Component
     public function render()
     {
         $user = Auth::user();
-        $isAdmin = $user->hasRole('admin');
 
         $query = TenantInvitation::with('house.block.property', 'existingTenant')
-            ->latest();
-
-        if (! $isAdmin) {
-            $query->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $user->id));
-        }
+            ->latest()
+            ->accessibleBy($user);
 
         return view('livewire.tenant-invitations.index', [
             'invitations' => $query->paginate(20),

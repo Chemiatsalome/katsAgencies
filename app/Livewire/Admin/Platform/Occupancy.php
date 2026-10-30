@@ -6,11 +6,14 @@ use App\Models\House;
 use App\Models\Property;
 use App\Models\User;
 use Livewire\Component;
+use Livewire\WithPagination;
 use Livewire\Attributes\Layout;
 
 #[Layout('layouts.admin')]
 class Occupancy extends Component
 {
+    use WithPagination;
+
     private const STATUS_META = [
         'occupied' => ['label' => 'Occupied', 'color' => '#2E8B57'],
         'vacant' => ['label' => 'Vacant', 'color' => '#94A3B8'],
@@ -43,10 +46,10 @@ class Occupancy extends Component
             ->filter(fn ($row) => $row['count'] > 0)
             ->values();
 
-        $byLandlord = User::role('landlord')
+        $byLandlord = User::approvedLandlords()
             ->orderBy('name')
-            ->get()
-            ->map(function (User $landlord) {
+            ->paginate(15, ['*'], 'landlordPage')
+            ->through(function (User $landlord) {
                 $houses = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->get(['status']);
                 $total = $houses->count();
                 $occupied = $houses->where('status', 'occupied')->count();
@@ -86,7 +89,7 @@ class Occupancy extends Component
             'chartRows' => $chartRows,
             'byLandlord' => $byLandlord,
             'byProperty' => $byProperty,
-            'landlords' => User::role('landlord')->orderBy('name')->get(['id', 'name']),
+            'landlords' => User::approvedLandlords()->orderBy('name')->get(['id', 'name']),
         ]);
     }
 }

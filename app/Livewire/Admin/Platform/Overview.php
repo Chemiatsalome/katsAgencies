@@ -10,11 +10,14 @@ use App\Services\RentScheduleService;
 use Illuminate\Support\Carbon;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use Livewire\WithPagination;
 use Livewire\Attributes\Layout;
 
 #[Layout('layouts.admin')]
 class Overview extends Component
 {
+    use WithPagination;
+
     public ?int $landlordId = null;
 
     #[Url]
@@ -53,6 +56,15 @@ class Overview extends Component
             // "paid" and is correctly excluded here — this is NOT simply
             // expected minus collected, which would double back into arrears
             // that were never real.
+            //
+            // Deliberately NOT netted against Tenancy::advanceCreditAvailable()
+            // the way the real-time "what's owed right now" figures below are
+            // (totalArrears, per-landlord outstanding, PropertyFinanceService::
+            // outstanding()) — this is a different metric. It's this specific
+            // period's own shortfall for a historical trend chart; crediting a
+            // later month's surplus back onto an earlier month's bar would
+            // make a past month's chart retroactively change as later data
+            // comes in, which isn't what "how did period X perform" means.
             $outstanding = (float) RentCharge::outstanding()
                 ->forPeriod($year, $month)
                 ->whereIn('tenancy_id', $tenancyIds)
@@ -74,28 +86,32 @@ class Overview extends Component
         $months = $this->monthlyTotals($this->year, $this->landlordId);
         $tenancyIds = $this->tenancyIdsFor($this->landlordId);
 
-        $totalArrears = (float) RentCharge::outstanding()
-            ->whereIn('tenancy_id', $tenancyIds)
-            ->get()
-            ->sum(fn (RentCharge $c) => $c->amount_expected - $c->amount_paid);
+        // All-time, right-now arrears — unlike monthlyTotals()'s per-period
+        // figure above, this one IS the same "what's actually still owed"
+        // concept as Tenancy::balance() / Arrears\Index, so it reuses the
+        // already-netted, already-tested shared calculation instead of its
+        // own raw (and previously un-netted) duplicate.
+        $totalArrears = app(PropertyFinanceService::class)->outstanding($tenancyIds);
 
         $totalExpected = array_sum(array_column($months, 'expected'));
         $totalCollected = array_sum(array_column($months, 'collected'));
 
-        $byLandlord = User::role('landlord')
+        // Paginated before the per-landlord totals are computed, not after
+        // — each row needs a full year of monthlyTotals() built just for
+        // it, so only computing that for the 15 landlords actually shown
+        // (via ->through()) avoids doing the same work for every other
+        // landlord on the platform on every single render.
+        $byLandlord = User::approvedLandlords()
             ->orderBy('name')
-            ->get()
-            ->map(function (User $landlord) use ($months) {
+            ->paginate(15, ['*'], 'landlordPage')
+            ->through(function (User $landlord) {
                 $landlordMonths = $this->monthlyTotals($this->year, $landlord->id);
 
                 $expected = array_sum(array_column($landlordMonths, 'expected'));
                 $collected = array_sum(array_column($landlordMonths, 'collected'));
 
                 $tenancyIds = $this->tenancyIdsFor($landlord->id);
-                $outstanding = (float) RentCharge::outstanding()
-                    ->whereIn('tenancy_id', $tenancyIds)
-                    ->get()
-                    ->sum(fn (RentCharge $c) => $c->amount_expected - $c->amount_paid);
+                $outstanding = app(PropertyFinanceService::class)->outstanding($tenancyIds);
 
                 return (object) [
                     'landlord' => $landlord,
@@ -113,7 +129,7 @@ class Overview extends Component
             'totalArrears' => $totalArrears,
             'collectionRate' => $totalExpected > 0 ? round($totalCollected / $totalExpected * 100, 1) : 0,
             'byLandlord' => $byLandlord,
-            'landlords' => User::role('landlord')->orderBy('name')->get(['id', 'name']),
+            'landlords' => User::approvedLandlords()->orderBy('name')->get(['id', 'name']),
             'availableYears' => app(RentScheduleService::class)->availableYears(null),
         ]);
     }

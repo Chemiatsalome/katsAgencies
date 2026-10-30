@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Forms;
 
+use App\Models\Setting;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
@@ -39,6 +40,34 @@ class LoginForm extends Form
         }
 
         RateLimiter::clear($this->throttleKey());
+
+        // A brand-new landlord signup pending its first admin review is a
+        // valid destination (the pending-approval page), not a login
+        // failure — everything else inactive/suspended means access is off,
+        // and the user should be told that here rather than being logged in
+        // and silently bounced back out by EnsureAccountIsActive.
+        $user = Auth::user();
+
+        if ($user->status !== 'active' && ! ($user->status === 'inactive' && $user->hasRole('landlord'))) {
+            Auth::logout();
+
+            throw ValidationException::withMessages([
+                'form.email' => $this->deactivatedMessage($user->status),
+            ]);
+        }
+    }
+
+    protected function deactivatedMessage(string $status): string
+    {
+        $reason = $status === 'suspended'
+            ? 'Your account has been suspended.'
+            : 'Your account is inactive.';
+
+        $contact = Setting::get('org_contact_email');
+
+        return $contact
+            ? "{$reason} Please contact your administrator at {$contact} for assistance."
+            : "{$reason} Please contact your administrator for assistance.";
     }
 
     /**

@@ -4,6 +4,13 @@
         </x-slot>
 
         <div class="p-6 space-y-6">
+            <x-page-banner
+                image="residential-compound-01.jpg"
+                eyebrow="Platform Oversight"
+                title="Every landlord and property, in one view"
+                subtitle="Aggregate performance across the entire Kats Agencies platform."
+            />
+
             <div>
                 <h3 class="text-sm font-semibold text-brand-slate uppercase tracking-wide mb-3">Landlords</h3>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -46,6 +53,7 @@
                     <h3 class="text-sm font-semibold text-charcoal">Recently Registered Landlords</h3>
                     <a href="{{ route('admin.landlords.index') }}" wire:navigate class="text-xs text-teal hover:underline">View all</a>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -67,11 +75,12 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="4" class="px-5 py-6 text-center text-gray-400">No landlords yet.</td>
+                                <td colspan="4" class="px-5 py-6 text-center text-brand-slate">No landlords yet.</td>
                             </tr>
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>

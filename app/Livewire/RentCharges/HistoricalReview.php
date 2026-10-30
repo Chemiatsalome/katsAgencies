@@ -32,8 +32,14 @@ class HistoricalReview extends Component
 
     public bool $selectAll = false;
 
+    // Reverting a historical payment is never delegable to a manager, no
+    // matter what else the landlord has granted — mirrors the guard in
+    // RentCharges\Index::guardLandlordOnly(). Without this, a manager with
+    // only tenancies.terminate (nothing finance-related) could reach this
+    // page, since TenancyPolicy::update accepts that permission too.
     public function mount(): void
     {
+        abort_unless(Auth::user()->hasRole('landlord'), 403);
         $this->year = (int) (request()->query('year') ?: now()->year);
     }
 

@@ -88,7 +88,6 @@
                     <div class="mt-1 flex gap-4 text-sm">
                         <label class="flex items-center gap-1.5"><input type="checkbox" wire:model="channels" value="in_app" class="rounded border-brand-border text-navy"> In-App</label>
                         <label class="flex items-center gap-1.5"><input type="checkbox" wire:model="channels" value="email" class="rounded border-brand-border text-navy"> Email</label>
-                        <label class="flex items-center gap-1.5"><input type="checkbox" wire:model="channels" value="sms" class="rounded border-brand-border text-navy"> SMS</label>
                     </div>
                     <x-input-error :messages="$errors->get('channels')" class="mt-1" />
                 </div>
@@ -100,6 +99,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Recent Messages</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -112,18 +112,45 @@
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         @forelse ($history as $entry)
-                            <tr>
-                                <td class="px-5 py-2.5 font-medium text-charcoal">{{ $entry->title }}</td>
+                            <tr wire:key="message-{{ $entry->id }}" class="cursor-pointer hover:bg-gray-50" wire:click="toggleExpand({{ $entry->id }})">
+                                <td class="px-5 py-2.5 font-medium text-charcoal">
+                                    {{ $entry->title }}
+                                    @if ($entry->related?->replies->isNotEmpty())
+                                        <span class="text-xs text-teal ml-1">({{ $entry->related->replies->count() }} reply)</span>
+                                    @endif
+                                </td>
                                 <td class="px-5 py-2.5 text-brand-slate">{{ $entry->notifiable?->name ?? '—' }}</td>
                                 <td class="px-5 py-2.5 text-brand-slate">{{ ucfirst($entry->channel) }}</td>
                                 <td class="px-5 py-2.5"><x-status-badge :status="$entry->status" /></td>
                                 <td class="px-5 py-2.5 text-brand-slate">{{ $entry->created_at->format('d M Y H:i') }}</td>
                             </tr>
+                            @if ($expandedMessageId === $entry->id && $entry->related)
+                                <tr wire:key="message-thread-{{ $entry->id }}">
+                                    <td colspan="5" class="px-5 py-4 bg-gray-50 space-y-3">
+                                        <p class="text-sm text-charcoal whitespace-pre-line">{{ $entry->related->body }}</p>
+
+                                        @foreach ($entry->related->replies as $reply)
+                                            <div class="text-sm border-t border-gray-200 pt-3">
+                                                <span class="font-medium text-charcoal">{{ $reply->user_id === $entry->related->sender_id ? 'You' : $entry->notifiable?->name }}</span>
+                                                <span class="text-xs text-brand-slate ml-1">{{ $reply->created_at->format('d M Y H:i') }}</span>
+                                                <p class="text-brand-slate whitespace-pre-line">{{ $reply->body }}</p>
+                                            </div>
+                                        @endforeach
+
+                                        <form wire:submit="reply({{ $entry->id }})" class="pt-3 border-t border-gray-200 space-y-2">
+                                            <textarea wire:model="replyBody" rows="2" class="w-full rounded-md border-gray-300 text-sm" placeholder="Reply..."></textarea>
+                                            <x-input-error :messages="$errors->get('replyBody')" class="mt-1" />
+                                            <button type="submit" class="text-teal hover:underline text-xs font-medium">Send Reply</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            @endif
                         @empty
                             <tr><td colspan="5" class="px-5 py-6 text-center text-gray-400">No messages sent yet.</td></tr>
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>

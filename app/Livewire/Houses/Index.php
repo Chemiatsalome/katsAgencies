@@ -3,6 +3,7 @@
 namespace App\Livewire\Houses;
 
 use App\Models\Block;
+use App\Models\Tenancy;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 
@@ -21,6 +22,13 @@ class Index extends Component
     {
         $house = $this->block->houses()->findOrFail($houseId);
         $this->authorize('delete', $house);
+
+        if ($house->tenancies()->whereIn('status', Tenancy::OCCUPYING_STATUSES)->exists()) {
+            session()->flash('status', 'This unit has an active tenancy — end the tenancy before deleting it.');
+
+            return;
+        }
+
         $house->delete();
     }
 

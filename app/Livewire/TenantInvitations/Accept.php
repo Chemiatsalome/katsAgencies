@@ -8,6 +8,7 @@ use App\Services\NotificationService;
 use App\Services\TenancyProvisioningService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 
@@ -118,7 +119,7 @@ class Accept extends Component
             'id_number' => ['nullable', 'string', 'max:64'],
             'emergency_contact_name' => ['nullable', 'string', 'max:255'],
             'emergency_contact_phone' => ['nullable', 'string', 'max:32'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
+            'password' => ['required', 'string', Password::defaults(), 'confirmed'],
         ]);
 
         $provisioning = app(TenancyProvisioningService::class);

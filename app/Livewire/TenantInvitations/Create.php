@@ -4,6 +4,7 @@ namespace App\Livewire\TenantInvitations;
 
 use App\Models\Block;
 use App\Models\House;
+use App\Models\LandlordSetting;
 use App\Models\Property;
 use App\Models\Tenant;
 use App\Models\TenantInvitation;
@@ -48,6 +49,9 @@ class Create extends Component
     {
         $this->authorize('create', TenantInvitation::class);
         $this->move_in_date = now()->format('Y-m-d');
+
+        $landlordId = Auth::user()->landlordId();
+        $this->rent_due_day = $landlordId ? (int) LandlordSetting::get($landlordId, 'default_rent_due_day', 5) : 5;
     }
 
     public function updatedPropertyId(): void
@@ -143,24 +147,19 @@ class Create extends Component
     public function render()
     {
         $user = Auth::user();
-        $isAdmin = $user->hasRole('admin');
 
-        $propertiesQuery = $isAdmin ? Property::query() : Property::forLandlord($user->id);
-        $properties = $propertiesQuery->orderBy('name')->get(['id', 'name']);
+        $properties = Property::accessibleBy($user)->orderBy('name')->get(['id', 'name']);
 
         $blocks = collect();
         if ($this->property_id) {
-            $blocks = Block::where('property_id', $this->property_id)->orderBy('name')->get(['id', 'name']);
+            $blocks = Block::where('property_id', $this->property_id)->accessibleBy($user)->orderBy('name')->get(['id', 'name']);
         }
 
-        $housesQuery = House::vacant()->with('block.property');
+        $housesQuery = House::vacant()->with('block.property')->accessibleBy($user);
         if ($this->block_id) {
             $housesQuery->where('block_id', $this->block_id);
         } elseif ($this->property_id) {
             $housesQuery->whereHas('block', fn ($q) => $q->where('property_id', $this->property_id));
-        }
-        if (! $isAdmin) {
-            $housesQuery->whereHas('block.property', fn ($q) => $q->where('landlord_id', $user->id));
         }
 
         return view('livewire.tenant-invitations.create', [

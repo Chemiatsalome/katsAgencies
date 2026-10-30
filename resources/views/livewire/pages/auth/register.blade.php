@@ -1,9 +1,12 @@
 <?php
 
+use App\Mail\LandlordApplicationReceivedMail;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\Rules;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
@@ -12,36 +15,61 @@ new #[Layout('layouts.guest')] class extends Component
 {
     public string $name = '';
     public string $email = '';
+    public string $phone = '';
+    public string $national_id = '';
+    public string $business_name = '';
+    public string $property_location = '';
+    public string $intended_unit_count = '';
     public string $password = '';
     public string $password_confirmation = '';
-    public bool $register_as_landlord = false;
 
     /**
      * Handle an incoming registration request.
+     *
+     * This form only ever creates landlord accounts — tenants and managers
+     * always arrive through an invitation link, never self-registration.
+     * The extra details below (beyond name/email/password) exist purely as
+     * a basis for the admin's approve/reject decision on the Applications
+     * review page — they're not used anywhere else in the app.
      */
     public function register(): void
     {
         $validated = $this->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'phone' => ['required', 'string', 'max:20'],
+            'national_id' => ['required', 'string', 'max:50'],
+            'business_name' => ['nullable', 'string', 'max:255'],
+            'property_location' => ['required', 'string', 'max:255'],
+            'intended_unit_count' => ['required', 'integer', 'min:1'],
             'password' => ['required', 'string', 'confirmed', Rules\Password::defaults()],
         ]);
 
         $validated['password'] = Hash::make($validated['password']);
-        $validated['status'] = $this->register_as_landlord ? 'inactive' : 'active';
+        $validated['status'] = 'inactive';
 
         event(new Registered($user = User::create($validated)));
 
-        if ($this->register_as_landlord) {
-            $user->assignRole('landlord');
+        $user->assignRole('landlord');
+
+        $notifications = app(NotificationService::class);
+
+        foreach (User::role('admin')->get() as $admin) {
+            $notifications->notify(
+                $admin,
+                'landlord_application_submitted',
+                'New Landlord Application',
+                "{$user->name} applied to list {$user->intended_unit_count} unit(s) in {$user->property_location}.",
+                ['in_app'],
+                $user,
+            );
         }
+
+        Mail::to($user->email)->send(new LandlordApplicationReceivedMail($user->name));
 
         Auth::login($user);
 
-        $this->redirect(
-            $this->register_as_landlord ? route('pending-approval', absolute: false) : route('dashboard', absolute: false),
-            navigate: true
-        );
+        $this->redirect(route('pending-approval', absolute: false), navigate: true);
     }
 }; ?>
 
@@ -59,6 +87,41 @@ new #[Layout('layouts.guest')] class extends Component
             <x-input-label for="email" :value="__('Email')" />
             <x-text-input wire:model="email" id="email" class="block mt-1 w-full" type="email" name="email" required autocomplete="username" />
             <x-input-error :messages="$errors->get('email')" class="mt-2" />
+        </div>
+
+        <!-- Phone -->
+        <div class="mt-4">
+            <x-input-label for="phone" :value="__('Phone number')" />
+            <x-text-input wire:model="phone" id="phone" class="block mt-1 w-full" type="tel" name="phone" required autocomplete="tel" />
+            <x-input-error :messages="$errors->get('phone')" class="mt-2" />
+        </div>
+
+        <!-- National ID -->
+        <div class="mt-4">
+            <x-input-label for="national_id" :value="__('National ID / Passport number')" />
+            <x-text-input wire:model="national_id" id="national_id" class="block mt-1 w-full" type="text" name="national_id" required />
+            <x-input-error :messages="$errors->get('national_id')" class="mt-2" />
+        </div>
+
+        <!-- Business name -->
+        <div class="mt-4">
+            <x-input-label for="business_name" :value="__('Business / agency name (optional)')" />
+            <x-text-input wire:model="business_name" id="business_name" class="block mt-1 w-full" type="text" name="business_name" />
+            <x-input-error :messages="$errors->get('business_name')" class="mt-2" />
+        </div>
+
+        <!-- Property location -->
+        <div class="mt-4">
+            <x-input-label for="property_location" :value="__('Where are the properties you plan to list?')" />
+            <x-text-input wire:model="property_location" id="property_location" class="block mt-1 w-full" type="text" name="property_location" placeholder="e.g. Nyali, Mombasa" required />
+            <x-input-error :messages="$errors->get('property_location')" class="mt-2" />
+        </div>
+
+        <!-- Intended unit count -->
+        <div class="mt-4">
+            <x-input-label for="intended_unit_count" :value="__('How many units do you intend to list?')" />
+            <x-text-input wire:model="intended_unit_count" id="intended_unit_count" class="block mt-1 w-full" type="number" min="1" name="intended_unit_count" required />
+            <x-input-error :messages="$errors->get('intended_unit_count')" class="mt-2" />
         </div>
 
         <!-- Password -->
@@ -84,14 +147,10 @@ new #[Layout('layouts.guest')] class extends Component
             <x-input-error :messages="$errors->get('password_confirmation')" class="mt-2" />
         </div>
 
-        <!-- Register as landlord -->
-        <div class="mt-4 flex items-start gap-2">
-            <input wire:model="register_as_landlord" id="register_as_landlord" type="checkbox" class="mt-0.5 rounded border-brand-border text-teal focus:ring-teal" />
-            <label for="register_as_landlord" class="text-sm text-charcoal">
-                I'm a landlord and want to list my properties on Kats Agencies.
-                <span class="block text-xs text-brand-slate">Landlord accounts are reviewed by an administrator before activation.</span>
-            </label>
-        </div>
+        <p class="mt-4 text-xs text-brand-slate">
+            This creates a landlord account for listing your properties on Kats Agencies. New accounts are reviewed by an administrator before activation.
+            Tenants and managers are set up by invitation instead.
+        </p>
 
         <div class="flex items-center justify-end mt-4">
             <a class="underline text-sm text-brand-slate hover:text-charcoal rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal" href="{{ route('login') }}" wire:navigate>

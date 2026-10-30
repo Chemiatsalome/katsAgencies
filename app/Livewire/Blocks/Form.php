@@ -28,7 +28,7 @@ class Form extends Component
             $this->name = $block->name;
             $this->description = (string) $block->description;
         } else {
-            $this->authorize('create', Block::class);
+            $this->authorize('create', [Block::class, $property]);
             $this->property = $property;
         }
     }

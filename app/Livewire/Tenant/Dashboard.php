@@ -13,7 +13,8 @@ class Dashboard extends Component
     public function render()
     {
         $tenant = Auth::user()->tenant;
-        $tenancy = $tenant?->tenancies()->active()->with('house.block.property')->first();
+        $tenancy = $tenant?->currentTenancy();
+        $tenancy?->load('house.block.property');
 
         $nextCharge = $tenancy
             ? RentCharge::where('tenancy_id', $tenancy->id)->outstanding()->orderBy('due_date')->first()
@@ -25,6 +26,7 @@ class Dashboard extends Component
             'balance' => $tenancy?->balance() ?? 0,
             'depositBalance' => $tenancy?->depositBalance() ?? 0,
             'nextCharge' => $nextCharge,
+            'nextRentDueDate' => $tenancy?->nextRentDueDate(),
             'recentPayments' => $tenancy
                 ? $tenancy->payments()->latest('payment_date')->latest('id')->limit(5)->get()
                 : collect(),

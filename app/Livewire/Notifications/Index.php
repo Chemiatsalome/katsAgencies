@@ -3,7 +3,6 @@
 namespace App\Livewire\Notifications;
 
 use App\Models\AppNotification;
-use App\Models\Tenant;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -15,15 +14,22 @@ class Index extends Component
     #[Url]
     public string $status = 'all';
 
+    public function markRead(int $notificationId): void
+    {
+        $notification = AppNotification::forLandlordContext(Auth::user())->findOrFail($notificationId);
+        $notification->update(['read_at' => now()]);
+    }
+
+    public function markAllRead(): void
+    {
+        AppNotification::forLandlordContext(Auth::user())->whereNull('read_at')->update(['read_at' => now()]);
+    }
+
     public function render()
     {
-        $landlordId = Auth::id();
+        $user = Auth::user();
 
-        $tenantIds = Tenant::whereHas('tenancies.house.block.property', fn ($q) => $q->where('landlord_id', $landlordId))->pluck('id');
-
-        $query = AppNotification::where('notifiable_type', (new Tenant)->getMorphClass())
-            ->whereIn('notifiable_id', $tenantIds)
-            ->with('notifiable');
+        $query = AppNotification::forLandlordContext($user)->with('notifiable');
 
         if ($this->status !== 'all') {
             $query->where('status', $this->status);
@@ -31,6 +37,7 @@ class Index extends Component
 
         return view('livewire.notifications.index', [
             'notifications' => $query->latest()->limit(100)->get(),
+            'unreadCount' => AppNotification::forLandlordContext($user)->whereNull('read_at')->count(),
         ]);
     }
 }

@@ -8,7 +8,7 @@
                     </p>
                     <h2 class="font-semibold text-xl text-charcoal leading-tight">Unit {{ $house->house_number }}</h2>
                 </div>
-                <a href="{{ route('manage.houses.edit', $house) }}" wire:navigate class="inline-flex items-center px-4 py-2 border border-brand-border text-charcoal text-sm font-medium rounded-md hover:bg-offwhite">
+                <a href="{{ route('manage.houses.edit', $house) }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 border border-brand-border text-charcoal text-xs sm:text-sm font-medium rounded-md hover:bg-offwhite">
                     Edit Unit
                 </a>
             </div>
@@ -68,6 +68,7 @@
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Occupancy History</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -92,12 +93,14 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
                 <div class="px-5 py-4 border-b border-brand-border">
                     <h3 class="text-sm font-semibold text-charcoal">Maintenance History</h3>
                 </div>
+                <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
                     <thead class="bg-gray-50 text-brand-slate">
                         <tr>
@@ -118,6 +121,7 @@
                         @endforelse
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </div>

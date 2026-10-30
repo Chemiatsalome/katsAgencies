@@ -49,11 +49,25 @@ class Index extends Component
 
     public function mount(): void
     {
+        // The one carve-out finance permission a manager can be granted — view
+        // only. Recording/reverting payments stays landlord-only regardless
+        // (enforced separately below, not by this permission).
+        abort_unless(Auth::user()->hasManagerPermission('finance.view_rent_status'), 403);
+
         // #[Url] already hydrates year/month from the query string before mount()
         // runs — only default them when the visitor didn't deep-link to a period.
         $this->year = (int) (request()->query('year') ?: now()->year);
         $this->month = (int) (request()->query('month') ?: now()->month);
         $this->payment_date = now()->format('Y-m-d');
+    }
+
+    // Recording or reverting a payment is never delegable to a manager, no
+    // matter what permissions the landlord has granted — the landlord's own
+    // TenancyPolicy::update() now permits managers with tenancies.terminate,
+    // which is a different action entirely, so this check must be separate.
+    private function guardLandlordOnly(): void
+    {
+        abort_unless(Auth::user()->hasRole('landlord'), 403);
     }
 
     public function updatedPropertyId(): void
@@ -69,6 +83,7 @@ class Index extends Component
 
         $charge = RentCharge::with('tenancy.tenant')->find($this->payingChargeId);
         if ($charge) {
+            $this->guardLandlordOnly();
             $this->authorize('update', $charge->tenancy);
         }
 
@@ -77,6 +92,7 @@ class Index extends Component
 
     public function markPaid(int $chargeId): void
     {
+        $this->guardLandlordOnly();
         $charge = RentCharge::findOrFail($chargeId);
         $this->authorize('update', $charge->tenancy);
 
@@ -90,6 +106,7 @@ class Index extends Component
 
     public function openPaymentModal(int $chargeId): void
     {
+        $this->guardLandlordOnly();
         $charge = RentCharge::findOrFail($chargeId);
         $this->authorize('update', $charge->tenancy);
 
@@ -103,6 +120,7 @@ class Index extends Component
 
     public function revertHistoricalPayment(int $chargeId): void
     {
+        $this->guardLandlordOnly();
         $charge = RentCharge::findOrFail($chargeId);
         $this->authorize('update', $charge->tenancy);
 
@@ -127,6 +145,7 @@ class Index extends Component
 
     public function recordPayment(): void
     {
+        $this->guardLandlordOnly();
         $charge = RentCharge::findOrFail($this->payingChargeId);
         $this->authorize('update', $charge->tenancy);
 
@@ -161,10 +180,9 @@ class Index extends Component
     {
         $user = Auth::user();
         $isAdmin = $user->hasRole('admin');
-        $landlordId = $isAdmin ? null : $user->id;
+        $landlordId = $user->landlordId();
 
-        $propertiesQuery = $isAdmin ? Property::query() : Property::forLandlord($user->id);
-        $properties = $propertiesQuery->orderBy('name')->get(['id', 'name']);
+        $properties = Property::accessibleBy($user)->orderBy('name')->get(['id', 'name']);
 
         $propertyFilter = $this->propertyId !== 'all' ? (int) $this->propertyId : null;
 
@@ -176,11 +194,27 @@ class Index extends Component
             ->when($propertyFilter, fn ($q) => $q->whereHas('tenancy.house.block', fn ($q2) => $q2->where('property_id', $propertyFilter)));
 
         if (! $isAdmin) {
-            $query->whereHas('tenancy.house.block.property', fn ($q) => $q->where('landlord_id', $user->id));
+            $query->whereHas('tenancy.house', fn ($q) => $q->accessibleBy($user));
         }
 
+        $charges = $query->orderBy('due_date')->paginate($this->perPage);
+
+        // Computed only for tenancies that actually have credit (most won't,
+        // so this stays cheap) — each tenancy's own oldest-first breakdown,
+        // same shared calculation as Tenancies\Show/Tenant\Rent, so this
+        // page's numbers never disagree with either of those.
+        $creditByChargeId = $charges->getCollection()
+            ->pluck('tenancy')
+            ->filter()
+            ->unique('id')
+            ->filter(fn ($tenancy) => $tenancy->advanceCreditAvailable() > 0)
+            ->flatMap(fn ($tenancy) => $tenancy->outstandingChargesWithCredit())
+            ->keyBy(fn (array $row) => $row['charge']->id)
+            ->map(fn (array $row) => $row['credit_applied']);
+
         return view('livewire.rent-charges.index', [
-            'charges' => $query->orderBy('due_date')->paginate($this->perPage),
+            'charges' => $charges,
+            'creditByChargeId' => $creditByChargeId,
             'properties' => $properties,
             'availableYears' => app(RentScheduleService::class)->availableYears($landlordId),
             'payingCharge' => $this->chargeForModal(),

@@ -31,11 +31,13 @@ class Index extends Component
 
         $complaints = Complaint::where('tenant_id', $tenant?->id ?? 0)
             ->with('maintenanceTask', 'house.block.property')
+            ->withCount('updates')
             ->latest()
             ->paginate(15);
 
         return view('livewire.tenant.maintenance.index', [
             'complaints' => $complaints,
+            'hasActiveTenancy' => (bool) $tenant?->tenancies()->active()->exists(),
         ]);
     }
 }

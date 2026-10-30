@@ -2,7 +2,7 @@
         <x-slot name="header">
             <div class="flex items-center justify-between">
                 <h2 class="font-semibold text-xl text-charcoal leading-tight">Landlords</h2>
-                <a href="{{ route('admin.landlords.applications') }}" wire:navigate class="inline-flex items-center px-4 py-2 bg-navy text-white text-sm font-medium rounded-md hover:bg-navy-dark">
+                <a href="{{ route('admin.landlords.applications') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-navy text-white text-xs sm:text-sm font-medium rounded-md hover:bg-navy-dark">
                     View Applications
                 </a>
             </div>
@@ -45,10 +45,19 @@
                                     <td class="px-5 py-3 text-brand-slate">{{ $row->unitsCount }}</td>
                                     <td class="px-5 py-3 text-brand-slate">{{ $row->occupiedCount }}</td>
                                     <td class="px-5 py-3 text-brand-slate">{{ $row->vacantCount }}</td>
-                                    <td class="px-5 py-3"><x-status-badge :status="$row->user->status" /></td>
+                                    <td class="px-5 py-3">
+                                        <x-status-badge :status="$row->user->isPendingApproval() ? 'pending_approval' : $row->user->status" />
+                                    </td>
                                     <td class="px-5 py-3 text-right space-x-2">
                                         @if ($row->user->status === 'active')
                                             <button wire:click="updateStatus({{ $row->user->id }}, 'suspended')" wire:confirm="Suspend this landlord?" class="text-danger hover:underline text-xs">Suspend</button>
+                                        @elseif ($row->user->isPendingApproval())
+                                            {{-- Deliberately not a one-click Approve here — pending
+                                                 applicants only ever get decided on the Applications
+                                                 page, which shows the phone/ID/business details and a
+                                                 Reject option side by side. A bare Approve button with
+                                                 no Reject next to it nudges toward approving by default. --}}
+                                            <a href="{{ route('admin.landlords.applications') }}" wire:navigate class="text-teal hover:underline text-xs">Review Application</a>
                                         @else
                                             <button wire:click="updateStatus({{ $row->user->id }}, 'active')" class="text-success hover:underline text-xs">Reactivate</button>
                                         @endif

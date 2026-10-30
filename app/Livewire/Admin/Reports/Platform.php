@@ -13,7 +13,7 @@ class Platform extends Component
 {
     public function exportLandlordSummary()
     {
-        $landlords = User::role('landlord')->withCount('properties')->with('properties.blocks.houses')->get();
+        $landlords = User::approvedLandlords()->withCount('properties')->with('properties.blocks.houses')->get();
 
         return response()->streamDownload(function () use ($landlords) {
             $out = fopen('php://output', 'w');
@@ -64,7 +64,7 @@ class Platform extends Component
     public function render()
     {
         return view('livewire.admin.reports.platform', [
-            'totalLandlords' => User::role('landlord')->count(),
+            'totalLandlords' => User::approvedLandlords()->count(),
             'totalProperties' => Property::count(),
             'totalUnits' => House::count(),
         ]);

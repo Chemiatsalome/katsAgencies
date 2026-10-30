@@ -7,9 +7,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 #[Fillable([
-    'tenancy_id', 'rent_charge_id', 'initiated_by', 'phone', 'amount',
+    'tenancy_id', 'rent_charge_id', 'initiated_by', 'phone', 'amount', 'purpose', 'collection_mode',
     'merchant_request_id', 'checkout_request_id', 'status', 'result_code',
-    'result_desc', 'mpesa_receipt_number', 'transaction_date', 'payment_id', 'raw_callback',
+    'result_desc', 'mpesa_receipt_number', 'transaction_date', 'payment_id', 'deposit_payment_id', 'raw_callback',
 ])]
 class MpesaTransaction extends Model
 {
@@ -40,6 +40,11 @@ class MpesaTransaction extends Model
     public function payment(): BelongsTo
     {
         return $this->belongsTo(Payment::class);
+    }
+
+    public function depositPayment(): BelongsTo
+    {
+        return $this->belongsTo(DepositPayment::class);
     }
 
     public function isFinished(): bool

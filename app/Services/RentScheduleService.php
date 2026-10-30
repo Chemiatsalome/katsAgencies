@@ -78,11 +78,151 @@ class RentScheduleService
                             'notes' => RentCharge::ASSUMED_PAID_NOTE,
                             'source' => 'opening_balance',
                         ]);
+                    } else {
+                        // Tier 2 (design approved 2026-10-25): a brand-new
+                        // charge may already be eligible for credit sitting
+                        // on this same tenancy's own 'advance' charges —
+                        // automatic-only allocation, no manual trigger (no
+                        // created_by, system-originated). A no-op when
+                        // there's no available credit.
+                        app(RentCreditAllocationService::class)->applyCreditToCharge($charge);
                     }
                 }
             });
 
         return $created;
+    }
+
+    /**
+     * Adds a one-time late fee to every outstanding RentCharge that's past
+     * its grace period — a no-op for any landlord who hasn't turned late
+     * fees on in Settings. Idempotent per charge via late_fee_charged_at, so
+     * it's safe to run more than once a day.
+     *
+     * Grace period depends on the tenancy: the landlord's configured grace
+     * window for everyone on the standard due date, or zero days for a
+     * tenant whose tenancy has due_day_requested_by_tenant set — they chose
+     * their own due date in exchange for forfeiting the grace period (see
+     * DueDayChangeRequest / Tenancies\Show::acceptDueDayChangeRequest()).
+     *
+     * @return int Number of charges a fee was just added to.
+     */
+    public function applyLateFees(?int $landlordId = null): int
+    {
+        $applied = 0;
+
+        $landlordIds = $landlordId ? [$landlordId] : User::role('landlord')->pluck('id')->all();
+
+        foreach ($landlordIds as $id) {
+            if (LandlordSetting::get($id, 'late_fee_enabled', '0') !== '1') {
+                continue;
+            }
+
+            $percentage = (float) LandlordSetting::get($id, 'late_fee_percentage', '5');
+            $standardGraceDays = (int) LandlordSetting::get($id, 'late_fee_grace_days', '5');
+
+            if ($percentage <= 0) {
+                continue;
+            }
+
+            $charges = RentCharge::whereIn('status', ['unpaid', 'partial', 'overdue'])
+                ->whereNull('late_fee_charged_at')
+                ->whereHas('tenancy.house.block.property', fn ($q) => $q->where('landlord_id', $id))
+                ->with('tenancy.tenant')
+                ->orderBy('due_date')
+                ->get()
+                ->groupBy('tenancy_id');
+
+            foreach ($charges as $tenancyCharges) {
+                $tenancy = $tenancyCharges->first()->tenancy;
+
+                // A surplus sitting on a different (already-'advance')
+                // charge for this same tenancy — consumed oldest-charge-
+                // first below, same ordering `allocatePayment()` uses for
+                // an actual payment, so a tenant who overpaid last month
+                // never gets charged a late fee on money they've already
+                // handed over, just not yet credited to this charge.
+                //
+                // Read through RentCreditAllocationService::unallocatedCredit()
+                // (Tier 2), not Tenancy::advanceCreditAvailable() directly —
+                // the raw surplus never shrinks as formal allocations are
+                // created elsewhere, so using it as-is here could net the
+                // same credit against a late fee *and* have it already be
+                // spent covering a different charge's shortfall.
+                $remainingCredit = app(RentCreditAllocationService::class)->unallocatedCredit($tenancy);
+
+                foreach ($tenancyCharges as $charge) {
+                    // A brand-new tenant's very first charge is often generated
+                    // with a due date already in the past relative to the
+                    // calendar month (the due day can easily fall before the
+                    // actual move-in day) — that's an artifact of how charges
+                    // are generated, not the tenant actually being late. Late
+                    // fees only start from the second billing period onward.
+                    $isFirstPeriod = $charge->period_year === $tenancy->move_in_date->year
+                        && $charge->period_month === $tenancy->move_in_date->month;
+
+                    if ($isFirstPeriod) {
+                        continue;
+                    }
+
+                    $graceDays = $tenancy->due_day_requested_by_tenant ? 0 : $standardGraceDays;
+
+                    if (now()->lessThanOrEqualTo($charge->due_date->copy()->addDays($graceDays)->endOfDay())) {
+                        continue;
+                    }
+
+                    $outstanding = (float) $charge->amount_expected - (float) $charge->amount_paid;
+
+                    if ($outstanding <= 0) {
+                        continue;
+                    }
+
+                    $covered = min($outstanding, $remainingCredit);
+                    $remainingCredit -= $covered;
+                    $netOutstanding = $outstanding - $covered;
+
+                    if ($netOutstanding <= 0) {
+                        // Fully covered by a credit already sitting elsewhere
+                        // on this tenancy — not actually late.
+                        continue;
+                    }
+
+                    $fee = round($netOutstanding * $percentage / 100, 2);
+
+                    if ($fee <= 0) {
+                        continue;
+                    }
+
+                    $periodLabel = Carbon::create($charge->period_year, $charge->period_month, 1)->format('F Y');
+                    $graceDescription = $graceDays > 0
+                        ? "{$graceDays}-day grace period passed"
+                        : 'no grace period — this tenancy\'s due date was tenant-requested';
+
+                    $charge->forceFill([
+                        'amount_expected' => (float) $charge->amount_expected + $fee,
+                        'late_fee_amount' => $fee,
+                        'late_fee_charged_at' => now(),
+                        'notes' => trim(($charge->notes ? $charge->notes."\n" : '')
+                            ."Late fee of KSh ".number_format($fee, 2)." added ({$percentage}% of overdue amount, {$graceDescription})."),
+                    ])->save();
+
+                    $charge->recalculateStatus();
+
+                    app(NotificationService::class)->notify(
+                        $tenancy->tenant,
+                        'late_fee_charged',
+                        'Late Fee Applied',
+                        "A late fee of KSh ".number_format($fee, 2)." was added to your {$periodLabel} rent because it was still unpaid after the due date.",
+                        ['in_app'],
+                        $tenancy,
+                    );
+
+                    $applied++;
+                }
+            }
+        }
+
+        return $applied;
     }
 
     /**

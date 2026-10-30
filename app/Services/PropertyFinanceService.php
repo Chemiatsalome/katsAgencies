@@ -51,12 +51,81 @@ class PropertyFinanceService
             ->sum('amount');
     }
 
+    /**
+     * Rent collected for the period specifically via M-Pesa — i.e. money that
+     * landed in Kats Agencies' own paybill and is held pending disbursement
+     * to the landlord, as distinct from cash/bank rent the landlord already
+     * has in hand directly. Excludes `opening_balance` the same as
+     * collectedRent() for the same reason.
+     */
+    public function collectedViaMpesa(Collection $tenancyIds, int $year, int $month): float
+    {
+        return (float) Payment::genuine()
+            ->whereIn('tenancy_id', $tenancyIds)
+            ->where('method', 'mpesa')
+            ->whereHas('rentCharge', fn ($q) => $q->forPeriod($year, $month))
+            ->sum('amount');
+    }
+
+    /**
+     * The canonical, non-double-counted breakdown behind every "overdue
+     * total / due-today total / monthly outstanding" figure across these
+     * tenancies: each tenancy's own available credit is consumed exactly
+     * ONCE, oldest outstanding charge first (Tenancy::outstandingChargesWithCredit()),
+     * and every caller below filters/buckets THIS one pass rather than
+     * running its own separate netting query — if "overdue amount" and
+     * "due today amount" each independently netted the same tenant's
+     * credit against their own narrower charge subset, the same credit
+     * could appear to cover both figures at once, overstating how far it
+     * actually goes.
+     *
+     * Only loads tenancies that actually have an outstanding charge — fine
+     * at landlord-portfolio scale (where this is used today); flagged as a
+     * revisit if it's ever pointed at the whole platform at once.
+     *
+     * @return Collection<int, array{charge: RentCharge, tenancy_id: int, gross: float, credit_applied: float, net: float}>
+     */
+    public function outstandingChargeBreakdown(Collection $tenancyIds): Collection
+    {
+        return Tenancy::whereIn('id', $tenancyIds)
+            ->whereHas('rentCharges', fn ($q) => $q->outstanding())
+            ->get()
+            ->flatMap(fn (Tenancy $tenancy) => $tenancy->outstandingChargesWithCredit()
+                ->map(fn (array $row) => $row + ['tenancy_id' => $tenancy->id]))
+            ->values();
+    }
+
+    /**
+     * Netted against each tenancy's own available advance credit before
+     * summing — mirrors Tenancy::balance() / Arrears\Index's existing
+     * netting so this aggregate (feeds Finance Overview, Landlord/Admin
+     * Platform dashboards, Properties\Show, Analytics\Performance) never
+     * disagrees with what a tenant's own page shows. Netted per tenancy,
+     * never pooled across tenancies — one tenant's surplus must never
+     * reduce a different tenant's genuine arrears.
+     */
     public function outstanding(Collection $tenancyIds): float
     {
-        return (float) RentCharge::outstanding()
+        $grossByTenancy = RentCharge::outstanding()
             ->whereIn('tenancy_id', $tenancyIds)
-            ->get()
-            ->sum(fn (RentCharge $c) => $c->amount_expected - $c->amount_paid);
+            ->selectRaw('tenancy_id, SUM(amount_expected - amount_paid) as gross')
+            ->groupBy('tenancy_id')
+            ->pluck('gross', 'tenancy_id');
+
+        $creditByTenancy = RentCharge::where('status', 'advance')
+            ->whereIn('tenancy_id', $tenancyIds)
+            ->selectRaw('tenancy_id, SUM(amount_paid - amount_expected) as credit')
+            ->groupBy('tenancy_id')
+            ->pluck('credit', 'tenancy_id');
+
+        $total = 0.0;
+
+        foreach ($grossByTenancy as $tenancyId => $gross) {
+            $credit = (float) ($creditByTenancy[$tenancyId] ?? 0);
+            $total += max(0, (float) $gross - $credit);
+        }
+
+        return $total;
     }
 
     public function expenses(Collection $propertyIds, \DateTimeInterface $from, \DateTimeInterface $to): float

@@ -43,7 +43,8 @@ class Profile extends Component
 
         $tenant->update($data);
 
-        $activeTenancy = $tenant->tenancies()->active()->with('house.block.property')->first();
+        $activeTenancy = $tenant->currentTenancy();
+        $activeTenancy?->load('house.block.property');
         if ($activeTenancy) {
             app(NotificationService::class)->notify(
                 $activeTenancy->house->block->property->landlord,
@@ -61,7 +62,8 @@ class Profile extends Component
     public function render()
     {
         $tenant = Auth::user()->tenant;
-        $tenancy = $tenant?->tenancies()->active()->with('house.block.property')->first();
+        $tenancy = $tenant?->currentTenancy();
+        $tenancy?->load('house.block.property');
 
         return view('livewire.tenant.profile', [
             'tenant' => $tenant,

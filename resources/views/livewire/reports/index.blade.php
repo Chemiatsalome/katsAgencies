@@ -13,23 +13,27 @@
                         @endforeach
                     </select>
                 </div>
-                <div>
-                    <label class="block text-xs font-medium text-brand-slate mb-1">Year</label>
-                    <select wire:model.live="year" class="rounded-md border-brand-border text-sm">
-                        @foreach (range((int) now()->year, (int) now()->year - 4) as $y)
-                            <option value="{{ $y }}">{{ $y }}</option>
-                        @endforeach
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-brand-slate mb-1">Month</label>
-                    <select wire:model.live="month" class="rounded-md border-brand-border text-sm">
-                        <option value="">All Months</option>
-                        @foreach (range(1, 12) as $m)
-                            <option value="{{ $m }}">{{ \Illuminate\Support\Carbon::create()->month($m)->format('F') }}</option>
-                        @endforeach
-                    </select>
-                </div>
+                @if ($isDateFilterable)
+                    <div>
+                        <label class="block text-xs font-medium text-brand-slate mb-1">Year</label>
+                        <select wire:model.live="year" class="rounded-md border-brand-border text-sm">
+                            @foreach (range((int) now()->year, (int) now()->year - 4) as $y)
+                                <option value="{{ $y }}">{{ $y }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-brand-slate mb-1">Month</label>
+                        <select wire:model.live="month" class="rounded-md border-brand-border text-sm">
+                            <option value="">All Months</option>
+                            @foreach (range(1, 12) as $m)
+                                <option value="{{ $m }}">{{ \Illuminate\Support\Carbon::create()->month($m)->format('F') }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+                @else
+                    <p class="text-xs text-brand-slate self-center">This report always shows current data{{ $type === 'cash_flow' ? ' for the trailing 12 months' : '' }}.</p>
+                @endif
                 <div class="ml-auto flex gap-2">
                     <button wire:click="exportCsv" class="px-3 py-1.5 text-sm rounded-md border border-brand-border text-charcoal hover:bg-offwhite">Export CSV</button>
                     <button wire:click="exportPdf" class="px-3 py-1.5 text-sm rounded-md bg-navy text-white hover:bg-navy-dark">Export PDF</button>
