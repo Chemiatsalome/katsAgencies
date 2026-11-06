@@ -79,37 +79,49 @@
                                             </td>
                                             <td class="px-5 py-2">
                                                 <x-status-badge :status="$charge->status" />
+                                                {{-- Tiebreak by id, not just created_at — two decisions on the same
+                                                     charge within the same second (same-request-cycle reject-then-
+                                                     accept, or just fast test/seed data) would otherwise resolve
+                                                     "latest" non-deterministically. Same fix already applied to
+                                                     Tenancy::contract() for the identical reason. --}}
+                                                @php $latestWaiverRequest = $charge->waiverRequests->sortByDesc('id')->first(); @endphp
                                                 @if ($charge->late_fee_amount > 0)
-                                                    @php $latestRequest = $charge->waiverRequests->sortByDesc('created_at')->first(); @endphp
-                                                    @if ($latestRequest?->status === 'pending')
+                                                    @if ($latestWaiverRequest?->status === 'pending')
                                                         <span class="block mt-1"><x-status-badge status="pending" /></span>
                                                         <span class="block text-xs text-brand-slate">Waiver requested</span>
                                                     @else
-                                                        @if ($latestRequest?->status === 'rejected')
+                                                        @if ($latestWaiverRequest?->status === 'rejected')
                                                             <span class="block mt-1 text-xs text-danger">Previous request declined</span>
-                                                            @if ($latestRequest->decision_note)
-                                                                <span class="block text-xs text-brand-slate">"{{ $latestRequest->decision_note }}"</span>
+                                                            @if ($latestWaiverRequest->decision_note)
+                                                                <span class="block text-xs text-brand-slate">"{{ $latestWaiverRequest->decision_note }}"</span>
                                                             @endif
                                                         @endif
                                                         <button wire:click="openWaiverForm({{ $charge->id }})" class="block mt-1 text-xs text-teal hover:underline">Request Waiver</button>
                                                     @endif
+                                                @elseif ($latestWaiverRequest?->status === 'accepted')
+                                                    {{-- The fee itself is already zeroed (waiveLateFee() folds it out
+                                                         of amount_expected) — without this, accepting a waiver was the
+                                                         one outcome that left no visible trace at all on this page,
+                                                         unlike a rejection (which keeps the fee, and the message,
+                                                         visible) or the landlord's own decided-request history. --}}
+                                                    <span class="block mt-1 text-xs text-success">Late fee waived</span>
+                                                @endif
 
-                                                    @if ($charge->waiverRequests->count() > 1)
-                                                        <div x-data="{ open: false }">
-                                                            <button @click="open = !open" class="block mt-1 text-xs text-brand-slate hover:underline" x-text="open ? 'Hide past requests' : 'Show past requests ({{ $charge->waiverRequests->count() }})'"></button>
-                                                            <ul x-show="open" x-cloak class="text-xs text-brand-slate space-y-0.5 mt-1">
-                                                                @foreach ($charge->waiverRequests->sortByDesc('created_at') as $past)
-                                                                    <li>
-                                                                        {{ $past->created_at->format('d M Y') }} —
-                                                                        <span class="{{ $past->status === 'accepted' ? 'text-success' : ($past->status === 'rejected' ? 'text-danger' : '') }}">{{ ucfirst($past->status) }}</span>
-                                                                        @if ($past->decision_note)
-                                                                            — "{{ $past->decision_note }}"
-                                                                        @endif
-                                                                    </li>
-                                                                @endforeach
-                                                            </ul>
-                                                        </div>
-                                                    @endif
+                                                @if ($charge->waiverRequests->count() > 1)
+                                                    <div x-data="{ open: false }">
+                                                        <button @click="open = !open" class="block mt-1 text-xs text-brand-slate hover:underline" x-text="open ? 'Hide past requests' : 'Show past requests ({{ $charge->waiverRequests->count() }})'"></button>
+                                                        <ul x-show="open" x-cloak class="text-xs text-brand-slate space-y-0.5 mt-1">
+                                                            @foreach ($charge->waiverRequests->sortByDesc('id') as $past)
+                                                                <li>
+                                                                    {{ $past->created_at->format('d M Y') }} —
+                                                                    <span class="{{ $past->status === 'accepted' ? 'text-success' : ($past->status === 'rejected' ? 'text-danger' : '') }}">{{ ucfirst($past->status) }}</span>
+                                                                    @if ($past->decision_note)
+                                                                        — "{{ $past->decision_note }}"
+                                                                    @endif
+                                                                </li>
+                                                            @endforeach
+                                                        </ul>
+                                                    </div>
                                                 @endif
                                             </td>
                                         </tr>
