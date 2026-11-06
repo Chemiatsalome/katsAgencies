@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Models\Complaint;
+use App\Models\DepositPayment;
 use App\Models\Disbursement;
 use App\Models\Document;
 use App\Models\Expense;
@@ -71,7 +72,16 @@ class DocumentPolicy
             // Payment evidence (e.g. a tenant's offline-payment proof) —
             // scoped via its tenancy, same as every other tenancy-rooted
             // subject above; Payment has no accessibleBy() of its own.
-            $subject instanceof Payment => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists(),
+            // Previously landlord/manager-only, same bug the Tenancy branch
+            // above was already fixed for: the tenant who uploaded this
+            // evidence in the first place couldn't view it back.
+            $subject instanceof Payment => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
+                || $subject->tenancy?->tenant_id === $user->tenant?->id,
+            // Deposit-payment evidence — same reasoning as Payment above,
+            // added alongside the deposit offline-claim flow this document
+            // category now comes from.
+            $subject instanceof DepositPayment => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
+                || $subject->tenancy?->tenant_id === $user->tenant?->id,
             // Payout evidence (e.g. an admin's bank/M-Pesa confirmation slip
             // for a disbursement) — the landlord it was paid out to, only.
             // Admins see everything via the Gate::before bypass already.

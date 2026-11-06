@@ -158,6 +158,9 @@ class AppNotification extends Model
             'payment_awaiting_confirmation' => $viewerIsLandlordOrManager && $this->related_type === Payment::class && $this->related
                 ? route('manage.tenancies.show', $this->related->tenancy_id).'#payments'
                 : null,
+            'deposit_payment_awaiting_confirmation' => $viewerIsLandlordOrManager && $this->related_type === \App\Models\DepositPayment::class && $this->related
+                ? route('manage.tenancies.show', $this->related->tenancy_id).'#deposit'
+                : null,
 
             // Tenant side — both land on the page where they'd actually
             // follow up: rent/arrears-related notices go to My Rent, the
@@ -175,7 +178,7 @@ class AppNotification extends Model
             // confirmed, disputed, or a correction reopening it — all land
             // back on My Rent, where the claim and its status actually show.
             'payment_confirmed_by_landlord', 'payment_disputed' => $viewerIsTenant ? route('tenant.rent') : null,
-            'deposit_requested', 'deposit_deduction_recorded', 'deposit_refunded', 'deposit_payment_confirmed', 'deposit_dispute_resolved', 'deposit_payment_failed' => $viewerIsTenant ? route('tenant.deposit') : null,
+            'deposit_requested', 'deposit_deduction_recorded', 'deposit_refunded', 'deposit_payment_confirmed', 'deposit_payment_confirmed_by_landlord', 'deposit_payment_disputed', 'deposit_dispute_resolved', 'deposit_payment_failed' => $viewerIsTenant ? route('tenant.deposit') : null,
             'due_day_change_decided', 'contract_sent' => $viewerIsTenant ? route('tenant.contract') : null,
             'tenancy_notice_issued', 'tenancy_notice_decision_made', 'tenancy_notice_withdrawn', 'tenancy_ended' => $viewerIsTenant ? route('tenant.tenancy') : null,
             'tenancy_change_request_decided', 'tenancy_renewal_decision_made', 'tenancy_renewal_alternative_proposed' => $viewerIsTenant ? route('tenant.tenancy') : null,

@@ -112,8 +112,18 @@
                                     @forelse ($payments as $payment)
                                         <tr>
                                             <td class="px-5 py-2 text-brand-slate">{{ $payment->payment_date->format('d M Y') }}</td>
-                                            <td class="px-5 py-2 text-charcoal">Deposit Payment ({{ ucfirst($payment->method) }})</td>
-                                            <td class="px-5 py-2 text-right text-success">+KSh {{ number_format($payment->amount, 2) }}</td>
+                                            <td class="px-5 py-2 text-charcoal">
+                                                Deposit Payment ({{ ucfirst($payment->method) }})
+                                                @if ($payment->needsLandlordConfirmation())
+                                                    <span class="text-warning font-medium">(awaiting confirmation)</span>
+                                                @elseif ($payment->isDisputed())
+                                                    <span class="text-danger font-medium">(disputed{{ $payment->dispute_reason ? ': "'.$payment->dispute_reason.'"' : '' }})</span>
+                                                @endif
+                                                @foreach ($payment->documents as $document)
+                                                    <a href="{{ $document->url() }}" target="_blank" rel="noopener" class="block text-teal hover:underline text-xs">{{ $document->original_filename }}</a>
+                                                @endforeach
+                                            </td>
+                                            <td class="px-5 py-2 text-right {{ $payment->needsLandlordConfirmation() || $payment->isDisputed() ? 'text-brand-slate' : 'text-success' }}">+KSh {{ number_format($payment->amount, 2) }}</td>
                                         </tr>
                                     @empty
                                         <tr>

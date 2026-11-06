@@ -5,16 +5,21 @@ namespace App\Livewire\Tenancies;
 use App\Models\AppNotification;
 use App\Models\Complaint;
 use App\Models\DepositDeduction;
+use App\Models\DepositPayment;
 use App\Models\DueDayChangeRequest;
 use App\Models\MaintenanceTask;
 use App\Models\Payment;
+use App\Models\RentCharge;
 use App\Models\Tenancy;
 use App\Models\TenancyChangeRequest;
 use App\Models\TenancyNotice;
 use App\Models\TenancyRenewalRequest;
+use App\Models\Tenant;
 use App\Services\ContractService;
 use App\Services\DepositService;
+use App\Services\MpesaService;
 use App\Services\NotificationService;
+use App\Services\RentReminderService;
 use App\Services\RentScheduleService;
 use App\Services\TenancyChangeRequestService;
 use App\Services\TenancyNoticeService;
@@ -122,6 +127,10 @@ class Show extends Component
 
     /** True only on the one request right after the tenant was just created — drives the "Tenant added successfully" banner. */
     public bool $justCreated = false;
+
+    public ?string $generatedInviteLink = null;
+
+    public ?string $generatedInviteWhatsappUrl = null;
 
     public function toggleDueDayHistory(): void
     {
@@ -597,9 +606,15 @@ class Show extends Component
     {
         $this->authorizeContractManagement();
 
+        $landlordId = $this->tenancy->house->block->property->landlord_id;
+        $missing = app(ContractService::class)->missingLetterheadFields($landlordId);
+
         try {
             app(ContractService::class)->generateForTenancy($this->tenancy);
-            session()->flash('status', 'Contract generated.');
+
+            session()->flash('status', $missing
+                ? 'Contract generated — click "Send to Tenant" below once ready. Note: '.implode(', ', $missing).' is not set under Settings → Contract Letterhead, so it prints blank on the agreement.'
+                : 'Contract generated. Click "Send to Tenant" below so your tenant can see and sign it.');
         } catch (\RuntimeException $e) {
             session()->flash('error', 'No active default contract template is configured. Set one up under Contract Templates first.');
         }
@@ -616,13 +631,30 @@ class Show extends Component
         $this->authorizeContractManagement();
 
         $this->validate([
-            'contractFile' => ['required', 'file', 'max:10240', 'mimes:pdf'],
+            // Not mimes:pdf,doc,docx — Laravel's `mimes` rule sniffs actual
+            // file content via PHP's fileinfo extension rather than
+            // trusting the filename, and a genuine .docx (itself just a
+            // zip container) very commonly content-sniffs as
+            // application/zip rather than the OOXML wordprocessing type —
+            // confirmed on this exact server (`mime_content_type()` on a
+            // real, validly-structured .docx returns "application/zip"
+            // here). That silently rejected every real Word upload with no
+            // obvious explanation, which is exactly what looked like "I
+            // uploaded a contract and the tenant still doesn't see it."
+            // `extensions` checks the uploaded filename instead (still
+            // guarded against a disguised executable — see
+            // shouldBlockPhpUpload() in Laravel's validator). Can't combine
+            // this with mimes:pdf as a belt-and-braces check for the PDF
+            // case specifically: Laravel ANDs every rule on a field, so
+            // requiring content-sniffed mimes:pdf would again reject every
+            // real .doc/.docx outright, right back to this same bug.
+            'contractFile' => ['required', 'file', 'max:10240', 'extensions:pdf,doc,docx'],
         ]);
 
         app(ContractService::class)->uploadForTenancy($this->tenancy, $this->contractFile, Auth::id());
 
         $this->reset(['contractFile', 'showUploadForm']);
-        session()->flash('status', 'Uploaded contract saved as a new version.');
+        session()->flash('status', 'Uploaded contract saved as a new version. Click "Send to Tenant" below so your tenant can see and sign it — uploading alone doesn\'t notify them.');
     }
 
     public function sendContract(): void
@@ -683,6 +715,97 @@ class Show extends Component
         $service->generate($this->tenancy)->save($path);
 
         return response()->download($path, $filename)->deleteFileAfterSend();
+    }
+
+    /**
+     * A tenant added directly here (as opposed to the self-registration
+     * invite flow) has a Tenant row but no linked User — they have no way
+     * to log in at all until a portal invite is sent. Mirrors
+     * Tenancies\Index::sendPortalInvite() — see that for why the token is
+     * always regenerated.
+     */
+    public function sendPortalInvite(): void
+    {
+        $this->authorize('update', $this->tenancy);
+
+        $tenant = $this->tenancy->tenant;
+
+        if ($tenant->hasPortalAccess()) {
+            return;
+        }
+
+        $tenant->update([
+            'portal_invite_token' => \Illuminate\Support\Str::random(48),
+            'portal_invite_sent_at' => now(),
+        ]);
+
+        $this->generatedInviteLink = route('tenant-portal-invite.accept', $tenant->portal_invite_token);
+        $this->generatedInviteWhatsappUrl = $this->buildWhatsappUrl($tenant, $this->generatedInviteLink);
+    }
+
+    public function dismissInviteLink(): void
+    {
+        $this->reset(['generatedInviteLink', 'generatedInviteWhatsappUrl']);
+    }
+
+    private function buildWhatsappUrl(Tenant $tenant, string $link): ?string
+    {
+        if (! $tenant->phone) {
+            return null;
+        }
+
+        $unit = "{$this->tenancy->house->block->property->name}, {$this->tenancy->house->block->name}, Unit {$this->tenancy->house->house_number}";
+
+        // WhatsApp's own formatting syntax, not standard Markdown: single
+        // asterisks for *bold*, single underscores for _italic_ — doubling
+        // them (as in "**bold**") just prints the literal asterisks.
+        $message = <<<MESSAGE
+        Hello {$tenant->name},
+
+        Your property management has partnered with Kats Agencies to provide a tenant portal for your unit at *{$unit}*.
+
+        Please create your *free tenant account* using the link below. The portal will allow you to:
+
+        - Check your rent balance
+        - View your payment history
+        - Pay rent online
+
+        *Create your account here:* {$link}
+
+        Thank you for your cooperation.
+
+        _Kats Agencies_
+        MESSAGE;
+
+        return 'https://wa.me/'.app(MpesaService::class)->normalizePhone($tenant->phone).'?text='.rawurlencode($message);
+    }
+
+    /**
+     * Same manual nudge as RentCharges\Index::sendReminder() — shared logic
+     * lives in RentReminderService so the wording/dedup guard can't drift
+     * between the two entry points. Targets the oldest outstanding charge
+     * on this tenancy, since that's the one actually overdue the longest.
+     */
+    public function sendReminder(): void
+    {
+        $this->authorize('update', $this->tenancy);
+
+        $charge = $this->tenancy->rentCharges()
+            ->whereIn('status', ['unpaid', 'partial', 'overdue'])
+            ->orderBy('due_date')
+            ->first();
+
+        if (! $charge) {
+            session()->flash('status', 'No outstanding rent to remind about — this tenant is fully paid up.');
+
+            return;
+        }
+
+        $sent = app(RentReminderService::class)->sendManualReminder($charge);
+
+        session()->flash('status', $sent
+            ? "Reminder sent to {$this->tenancy->tenant->name}."
+            : "A reminder was already sent to {$this->tenancy->tenant->name} today.");
     }
 
     public function requestOutstandingDeposit(): void
@@ -862,6 +985,67 @@ class Show extends Component
         session()->flash('status', 'Payment disputed — the tenant has been notified.');
     }
 
+    /** The landlord acknowledges a tenant's offline deposit-payment claim actually arrived. Mirrors confirmPayment() above exactly, for the deposit ledger instead of rent. */
+    public function confirmDepositPayment(int $depositPaymentId): void
+    {
+        $this->authorize('update', $this->tenancy);
+
+        $payment = DepositPayment::where('tenancy_id', $this->tenancy->id)->findOrFail($depositPaymentId);
+
+        if ($payment->status === 'confirmed') {
+            return;
+        }
+
+        app(DepositService::class)->confirmPayment($payment, Auth::user());
+
+        app(NotificationService::class)->markRelatedRead($payment, Auth::user());
+
+        // Distinct from 'deposit_payment_confirmed' (the M-Pesa-verified
+        // success path in MpesaCallbackController) — same reasoning as
+        // rent's 'payment_confirmed' vs 'payment_confirmed_by_landlord'.
+        app(NotificationService::class)->notify(
+            $this->tenancy->tenant,
+            'deposit_payment_confirmed_by_landlord',
+            'Your Deposit Payment Was Confirmed',
+            'Your landlord confirmed your KSh '.number_format((float) $payment->amount, 2).' deposit payment — it now reflects in your deposit balance.',
+            ['in_app', 'email'],
+            $payment,
+        );
+
+        session()->flash('status', 'Deposit payment confirmed.');
+    }
+
+    /** Mirrors disputePayment() above exactly, for the deposit ledger instead of rent. */
+    public function disputeDepositPayment(int $depositPaymentId, string $reason): void
+    {
+        $this->authorize('update', $this->tenancy);
+
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            session()->flash('error', 'A reason is required to dispute a deposit payment.');
+
+            return;
+        }
+
+        $payment = DepositPayment::where('tenancy_id', $this->tenancy->id)->findOrFail($depositPaymentId);
+
+        app(DepositService::class)->disputePayment($payment, Auth::user(), $reason);
+
+        app(NotificationService::class)->markRelatedRead($payment, Auth::user());
+
+        app(NotificationService::class)->notify(
+            $this->tenancy->tenant,
+            'deposit_payment_disputed',
+            'Your Deposit Payment Was Disputed',
+            'Your landlord disputed your KSh '.number_format((float) $payment->amount, 2)." deposit payment claim: \"{$reason}\". Please check the details and submit a corrected payment if needed.",
+            ['in_app', 'email'],
+            $payment,
+        );
+
+        session()->flash('status', 'Deposit payment disputed — the tenant has been notified.');
+    }
+
     public function cancelRefundForm(): void
     {
         $this->reset(['refund_amount', 'refund_notes', 'showRefundForm']);
@@ -1009,7 +1193,7 @@ class Show extends Component
                 ->keyBy(fn (array $row) => $row['charge']->id)
                 ->map(fn (array $row) => $row['credit_applied']),
             'payments' => $this->tenancy->payments()->latest('payment_date')->latest('id')->get(),
-            'depositPayments' => $this->tenancy->depositPayments()->latest('payment_date')->get(),
+            'depositPayments' => $this->tenancy->depositPayments()->with('documents')->latest('payment_date')->get(),
             'depositRefunds' => $this->tenancy->depositRefunds()->latest('refund_date')->get(),
             'depositDeductions' => $this->tenancy->depositDeductions()->with('documents')->latest('deduction_date')->get(),
             'depositOutstanding' => app(DepositService::class)->outstanding($this->tenancy),

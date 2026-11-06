@@ -87,7 +87,7 @@ class Deposit extends Component
             'deducted' => $service->deductedTotal($tenancy),
             'refunded' => $service->refundedTotal($tenancy),
             'deductions' => $tenancy->depositDeductions()->with('documents')->orderByDesc('deduction_date')->get(),
-            'payments' => $tenancy->depositPayments()->orderByDesc('payment_date')->get(),
+            'payments' => $tenancy->depositPayments()->with('documents')->orderByDesc('payment_date')->get(),
             'refunds' => $tenancy->depositRefunds()->orderByDesc('refund_date')->get(),
         ]);
     }

@@ -50,6 +50,18 @@
                         Download Record
                     </button>
                 @endcan
+                @can('update', $tenancy)
+                    @if (! $tenancy->tenant->hasPortalAccess())
+                        <button wire:click="sendPortalInvite" class="text-xs sm:text-sm text-charcoal border border-brand-border rounded-md px-2 py-1 sm:px-3 sm:py-1.5 hover:bg-offwhite">
+                            {{ $tenancy->tenant->isPortalInvited() ? 'Resend Invite' : 'Send Invite' }}
+                        </button>
+                    @endif
+                    @if ($tenancy->balance() > 0)
+                        <button wire:click="sendReminder" class="text-xs sm:text-sm text-charcoal border border-brand-border rounded-md px-2 py-1 sm:px-3 sm:py-1.5 hover:bg-offwhite">
+                            Send Reminder
+                        </button>
+                    @endif
+                @endcan
             </div>
             <div class="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 @can('update', $tenancy)
@@ -75,6 +87,30 @@
         @endif
         @if (session('status'))
             <div x-data x-init="$el.scrollIntoView({behavior: 'smooth', block: 'center'})" class="bg-green-50 border border-green-200 text-green-800 text-sm rounded-md px-4 py-2">{{ session('status') }}</div>
+        @endif
+        @if ($generatedInviteLink)
+            <div x-data x-init="$el.scrollIntoView({behavior: 'smooth', block: 'center'})" class="bg-teal/5 border border-teal/30 rounded-md px-4 py-3 text-sm space-y-2">
+                <div class="flex items-center justify-between">
+                    <p class="text-charcoal font-medium">Invite link for {{ $tenancy->tenant->name }}</p>
+                    <button wire:click="dismissInviteLink" class="text-brand-slate hover:text-charcoal text-xs">Dismiss</button>
+                </div>
+
+                @if ($generatedInviteWhatsappUrl)
+                    <a href="{{ $generatedInviteWhatsappUrl }}" target="_blank" rel="noopener"
+                       class="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md bg-[#25D366] text-white hover:bg-[#1ebe5b]">
+                        <x-whatsapp-icon />
+                        Send via WhatsApp
+                    </a>
+                @else
+                    <p class="text-xs text-warning">{{ $tenancy->tenant->name }} has no phone number on file, so there's no WhatsApp number to send to.</p>
+                @endif
+
+                <p class="text-brand-slate">Or copy the link and share it another way:</p>
+                <div class="flex items-center gap-2">
+                    <input type="text" readonly value="{{ $generatedInviteLink }}" onclick="this.select()" class="flex-1 text-xs bg-white border border-brand-border rounded-md px-3 py-1.5 text-charcoal" />
+                    <button type="button" onclick="navigator.clipboard.writeText('{{ $generatedInviteLink }}')" class="px-3 py-1.5 text-xs rounded-md bg-navy text-white hover:bg-navy-dark whitespace-nowrap">Copy</button>
+                </div>
+            </div>
         @endif
         @if (session('error'))
             <div x-data x-init="$el.scrollIntoView({behavior: 'smooth', block: 'center'})" class="bg-red-50 border border-red-200 text-danger text-sm rounded-md px-4 py-2">
@@ -709,7 +745,12 @@
                         <tr>
                             <th class="text-left px-5 py-2 font-medium">Date</th>
                             <th class="text-left px-5 py-2 font-medium">Method</th>
+                            <th class="text-left px-5 py-2 font-medium">Reference</th>
                             <th class="text-right px-5 py-2 font-medium">Amount</th>
+                            <th class="text-left px-5 py-2 font-medium">Status</th>
+                            @can('update', $tenancy)
+                                <th class="px-5 py-2"></th>
+                            @endcan
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
@@ -717,18 +758,44 @@
                             <tr>
                                 <td class="px-5 py-2 text-brand-slate">{{ $deposit->payment_date->format('d M Y') }}</td>
                                 <td class="px-5 py-2 text-brand-slate">{{ ucfirst($deposit->method) }}</td>
+                                <td class="px-5 py-2 text-brand-slate">{{ $deposit->reference_number ?? '—' }}</td>
                                 <td class="px-5 py-2 text-right text-charcoal">KSh {{ number_format($deposit->amount) }}</td>
+                                <td class="px-5 py-2">
+                                    <x-status-badge :status="$deposit->status" />
+                                    @if ($deposit->isDisputed() && $deposit->dispute_reason)
+                                        <span class="block text-xs text-brand-slate mt-0.5">"{{ $deposit->dispute_reason }}"</span>
+                                    @endif
+                                    @foreach ($deposit->documents as $document)
+                                        <a href="{{ $document->url() }}" target="_blank" rel="noopener" class="block text-teal hover:underline text-xs mt-0.5">{{ $document->original_filename }}</a>
+                                    @endforeach
+                                </td>
+                                @can('update', $tenancy)
+                                    <td class="px-5 py-2 text-right whitespace-nowrap">
+                                        @if ($deposit->needsLandlordConfirmation())
+                                            <button wire:click="confirmDepositPayment({{ $deposit->id }})" wire:confirm="Confirm this KSh {{ number_format($deposit->amount, 2) }} deposit payment? It will be added to the tenant's held deposit." class="text-success hover:underline text-xs font-medium">Confirm</button>
+                                            <button
+                                                x-data
+                                                @click="let reason = prompt('Reason for disputing this deposit payment:'); if (! reason) return; $wire.disputeDepositPayment({{ $deposit->id }}, reason)"
+                                                class="text-danger hover:underline text-xs font-medium ml-2"
+                                            >Dispute</button>
+                                        @endif
+                                    </td>
+                                @endcan
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="3" class="px-5 py-6 text-center text-gray-400">No deposit payments recorded.</td>
+                                <td colspan="6" class="px-5 py-6 text-center text-gray-400">No deposit payments recorded.</td>
                             </tr>
                         @endforelse
                         @foreach ($depositRefunds as $refund)
                             <tr>
                                 <td class="px-5 py-2 text-brand-slate">{{ $refund->refund_date->format('d M Y') }}</td>
-                                <td class="px-5 py-2 text-danger">Refunded{{ $refund->notes ? ' ('.$refund->notes.')' : '' }}</td>
+                                <td class="px-5 py-2 text-danger" colspan="2">Refunded{{ $refund->notes ? ' ('.$refund->notes.')' : '' }}</td>
                                 <td class="px-5 py-2 text-right text-danger">-KSh {{ number_format($refund->amount) }}</td>
+                                <td></td>
+                                @can('update', $tenancy)
+                                    <td></td>
+                                @endcan
                             </tr>
                         @endforeach
                     </tbody>
@@ -749,6 +816,12 @@
 
             <div class="px-5 pb-5">
                 @can('update', $tenancy)
+                    <x-floating-tip storage-key="contract-management">
+                        Read the instructions on this page before generating or uploading an agreement. Either way,
+                        don't forget to click <strong>Send to Tenant</strong> below once it's ready — generating or
+                        uploading alone doesn't notify your tenant.
+                    </x-floating-tip>
+
                     @if (! $contract)
                         <p class="text-sm text-brand-slate mb-3">No contract has been generated for this tenancy yet.</p>
                     @else
@@ -788,9 +861,27 @@
                     @endif
 
                     <div class="flex flex-wrap items-center gap-3">
+                        {{--
+                            wire:confirm treats an empty expression as "Are
+                            you sure?" rather than "skip the dialog" (see
+                            vendor Livewire's wire-confirm directive) — the
+                            attribute has to be left off entirely for the
+                            first-ever generation, or clicking "Use System
+                            Template" on a brand-new tenancy (nothing to
+                            lose, nothing to confirm) pops an unexpected
+                            "Are you sure?", and a landlord dismissing it —
+                            a reasonable reaction to a surprise prompt —
+                            ends up with no contract generated at all, which
+                            looks exactly like generation silently doing
+                            nothing. $contract itself isn't a deferred form
+                            field like the template body is, so (unlike
+                            there) its server-rendered truthiness here is
+                            never stale — safe to gate the attribute on it
+                            directly.
+                        --}}
                         <button
                             wire:click="generateContract"
-                            wire:confirm="{{ $contract ? 'This issues a new version '.($contract->version + 1).' and replaces v'.$contract->version.' as the current contract — v'.$contract->version.' stays on record as superseded, with its signing status and history intact. The new version still needs to be sent and signed separately. Continue?' : '' }}"
+                            @if ($contract) wire:confirm="This issues a new version {{ $contract->version + 1 }} and replaces v{{ $contract->version }} as the current contract — v{{ $contract->version }} stays on record as superseded, with its signing status and history intact. The new version still needs to be sent and signed separately. Continue?" @endif
                             class="text-sm {{ $contract ? 'text-brand-slate hover:underline' : 'text-white bg-navy rounded-md px-3 py-1.5 hover:bg-navy-dark' }}"
                         >{{ $contract ? 'Issue a Revised Agreement' : 'Use System Template' }}</button>
                         <button wire:click="toggleUploadForm" class="text-sm text-charcoal border border-brand-border rounded-md px-3 py-1.5 hover:bg-offwhite">
@@ -832,8 +923,22 @@
 
                     @if ($showUploadForm)
                         <form wire:submit="uploadContract" class="mt-3 flex items-center gap-3">
-                            <input type="file" wire:model="contractFile" accept="application/pdf" class="text-sm" />
-                            <x-primary-button type="submit" wire:loading.attr="disabled" wire:target="uploadContract">Save Uploaded Contract</x-primary-button>
+                            <input type="file" wire:model="contractFile" accept="application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="text-sm" />
+                            {{--
+                                wire:target scoped to "uploadContract" alone
+                                only disabled this button while the SUBMIT
+                                itself was in flight — the file's own
+                                background upload to Livewire's temp storage
+                                (triggered the instant it's picked, well
+                                before Save is ever clicked) wasn't covered.
+                                Clicking Save during that window submitted
+                                with contractFile still unset, failing with
+                                "The contract file field is required." even
+                                though a file was clearly selected — exactly
+                                what looked like uploading silently not
+                                working. Both phases need to disable it.
+                            --}}
+                            <x-primary-button type="submit" wire:loading.attr="disabled" wire:target="contractFile,uploadContract">Save Uploaded Contract</x-primary-button>
                         </form>
                         <div wire:loading wire:target="contractFile" class="text-xs text-brand-slate mt-1">Uploading…</div>
                         <x-input-error :messages="$errors->get('contractFile')" class="mt-1" />

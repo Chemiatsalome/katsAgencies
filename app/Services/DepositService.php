@@ -7,6 +7,7 @@ use App\Models\DepositPayment;
 use App\Models\DepositRefund;
 use App\Models\Document;
 use App\Models\Tenancy;
+use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -61,7 +62,16 @@ class DepositService
         );
     }
 
-    public function recordPayment(Tenancy $tenancy, float $amount, string $date, string $method, ?string $reference, ?string $notes, int $recordedBy): DepositPayment
+    /**
+     * $status defaults to 'confirmed' so both existing callers (an M-Pesa
+     * success callback, already verified by Safaricom; a landlord's own
+     * RecordDeposit entry, their own say-so) keep crediting the ledger
+     * immediately exactly as before. Only a tenant's own unverified offline
+     * claim (see Tenant\PayDeposit::submitOfflinePayment()) ever passes
+     * 'awaiting_landlord_confirmation' — excluded from Tenancy.deposit_paid
+     * until a landlord confirms it (see DepositPaymentObserver).
+     */
+    public function recordPayment(Tenancy $tenancy, float $amount, string $date, string $method, ?string $reference, ?string $notes, int $recordedBy, string $status = 'confirmed'): DepositPayment
     {
         if ($amount <= 0) {
             throw new InvalidArgumentException('Payment amount must be greater than zero.');
@@ -75,7 +85,33 @@ class DepositService
             'reference_number' => $reference,
             'recorded_by' => $recordedBy,
             'notes' => $notes,
+            'status' => $status,
         ]);
+    }
+
+    /** The landlord acknowledges a tenant's offline deposit-payment claim actually arrived. Mirrors Tenancies\Show::confirmPayment() exactly. */
+    public function confirmPayment(DepositPayment $payment, User $landlord): void
+    {
+        if ($payment->status === 'confirmed') {
+            return;
+        }
+
+        $payment->forceFill([
+            'status' => 'confirmed',
+            'confirmed_at' => now(),
+            'confirmed_by' => $landlord->id,
+        ])->save();
+    }
+
+    /** The landlord doesn't accept this claim as-is — reachable from either 'awaiting_landlord_confirmation' or an already-'confirmed' claim that turns out to be wrong. Mirrors Tenancies\Show::disputePayment() exactly. */
+    public function disputePayment(DepositPayment $payment, User $landlord, string $reason): void
+    {
+        $payment->forceFill([
+            'status' => 'disputed',
+            'disputed_at' => now(),
+            'dispute_reason' => $reason,
+            'disputed_by' => $landlord->id,
+        ])->save();
     }
 
     /**
