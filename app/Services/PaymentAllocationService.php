@@ -38,6 +38,21 @@ class PaymentAllocationService
      */
     private function allocateWithinTransaction(Tenancy $tenancy, float $amount, Carbon $date, array $attributes): Collection
     {
+        // Locks this tenancy's row for the rest of this transaction so two
+        // concurrent allocations against it — two STK pushes that both
+        // genuinely succeed close together, a tenant's offline claim racing
+        // their own STK success, or an STK success racing a landlord's own
+        // manual RecordPayment — can't both read the same pre-write "what's
+        // still due" snapshot and both allocate fully against the same
+        // charge. Every writer that reaches this method (MpesaCallbackController,
+        // Tenant\PayRent::submitOfflinePayment(), Payments\RecordPayment)
+        // now serializes here, mirroring the identical lock
+        // DepositService::recordDeduction()/recordRefund() and
+        // DisbursementService::recordDisbursement() already take on their
+        // own owning row. Scoped to just this one tenancy — a payment on a
+        // different tenancy is never blocked by this.
+        Tenancy::where('id', $tenancy->id)->lockForUpdate()->first();
+
         $remaining = $amount;
         $payments = collect();
         $notes = $attributes['notes'] ?? null;

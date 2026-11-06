@@ -12,6 +12,7 @@ use App\Services\PaymentAllocationService;
 use App\Services\PaymentGatewayService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 use Livewire\WithFileUploads;
 use RuntimeException;
@@ -28,6 +29,14 @@ class PayRent extends Component
 
     public string $amount = '';
 
+    // Only ever set server-side, by pay() below, against the tenancy it
+    // resolves there and there alone — #[Locked] refuses any client-sent
+    // update to this property outright. checkStatus()/render() additionally
+    // never trust the value alone: both re-scope the lookup to the
+    // authenticated tenant's own tenancy, so even if this property were
+    // ever compromised, it could not read or mutate another tenant's
+    // transaction. See audit Finding 1 (Phase 4).
+    #[Locked]
     public ?int $pendingTransactionId = null;
 
     // "I already paid offline" — a separate claim, not an STK push; stays
@@ -99,6 +108,18 @@ class PayRent extends Component
             $landlordId = $tenancy->house->block->property->landlord_id;
             $gateway = app(PaymentGatewayService::class);
 
+            $collectionMode = $gateway->collectionModeFor($landlordId);
+
+            // Mirrors the hidden button in the view — checked again here
+            // since the view alone is never enforcement. A landlord on
+            // manual tracking (or a direct setup already known broken) has
+            // no M-Pesa destination to push to at all.
+            if (! $collectionMode) {
+                $this->addError('phone', 'Online payment is not available for this property right now. Please use "Already paid another way" below, or contact your landlord.');
+
+                return;
+            }
+
             // Which specific rent charge(s) this settles is decided at callback
             // time against whatever is actually outstanding then (oldest first) —
             // a lump sum can span several months, so it isn't pinned to one charge here.
@@ -107,7 +128,7 @@ class PayRent extends Component
                 'initiated_by' => Auth::id(),
                 'phone' => app(MpesaService::class)->normalizePhone($this->phone),
                 'amount' => $this->amount,
-                'collection_mode' => $gateway->collectionModeFor($landlordId),
+                'collection_mode' => $collectionMode,
                 'status' => 'pending',
             ]);
 
@@ -133,15 +154,42 @@ class PayRent extends Component
         }
     }
 
+    /**
+     * The one place every lookup of $pendingTransactionId goes through —
+     * #[Locked] already stops the client from ever setting this property to
+     * someone else's transaction id, but this re-verifies ownership
+     * independently of that (never trust a property as proof of ownership
+     * on its own). Scoped to this tenant's own tenancy, exactly like
+     * Statements::downloadReceipt() scopes by tenancy_id — a mismatched or
+     * missing id is indistinguishable from "no transaction" to the caller.
+     */
+    private function ownPendingTransaction(): ?MpesaTransaction
+    {
+        if (! $this->pendingTransactionId) {
+            return null;
+        }
+
+        $tenancy = Auth::user()->tenant?->currentTenancy();
+
+        if (! $tenancy) {
+            return null;
+        }
+
+        return MpesaTransaction::where('tenancy_id', $tenancy->id)->find($this->pendingTransactionId);
+    }
+
     public function checkStatus(): void
     {
         if (! $this->pendingTransactionId) {
             return;
         }
 
-        $transaction = MpesaTransaction::find($this->pendingTransactionId);
+        $transaction = $this->ownPendingTransaction();
 
         if (! $transaction) {
+            // Either genuinely gone, or the id in hand doesn't belong to
+            // this tenant's tenancy — both are treated identically: clear
+            // it and never touch whatever that id actually points to.
             $this->pendingTransactionId = null;
 
             return;
@@ -255,7 +303,9 @@ class PayRent extends Component
     {
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
-        $transaction = $this->pendingTransactionId ? MpesaTransaction::find($this->pendingTransactionId) : null;
+        $transaction = $this->ownPendingTransaction();
+
+        $landlordId = $tenancy?->house?->block?->property?->landlord_id;
 
         return view('livewire.tenant.pay-rent', [
             'transaction' => $transaction,
@@ -265,6 +315,7 @@ class PayRent extends Component
             // full must never read as "nothing else is owed" when the
             // deposit itself is still short.
             'depositOutstanding' => $tenancy?->depositOutstanding() ?? 0,
+            'mpesaAvailable' => $landlordId ? (bool) app(PaymentGatewayService::class)->collectionModeFor($landlordId) : false,
         ]);
     }
 }

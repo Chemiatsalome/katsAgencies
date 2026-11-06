@@ -10,6 +10,7 @@ use App\Services\NotificationService;
 use App\Services\PaymentGatewayService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 use Livewire\WithFileUploads;
 use RuntimeException;
@@ -23,6 +24,13 @@ class PayDeposit extends Component
 
     public string $amount = '';
 
+    // Only ever set server-side, by pay() below, against the tenancy it
+    // resolves there and there alone — #[Locked] refuses any client-sent
+    // update to this property outright. checkStatus()/render() additionally
+    // never trust the value alone: both re-scope the lookup to the
+    // authenticated tenant's own tenancy. See audit Finding 1 (Phase 4),
+    // mirroring the identical fix in PayRent.
+    #[Locked]
     public ?int $pendingTransactionId = null;
 
     // "I already paid my deposit offline" — a separate claim, not an STK
@@ -108,15 +116,41 @@ class PayDeposit extends Component
         }
     }
 
+    /**
+     * The one place every lookup of $pendingTransactionId goes through —
+     * #[Locked] already stops the client from ever setting this property to
+     * someone else's transaction id, but this re-verifies ownership
+     * independently of that. Scoped to this tenant's own tenancy; a
+     * mismatched or missing id is indistinguishable from "no transaction"
+     * to the caller.
+     */
+    private function ownPendingTransaction(): ?MpesaTransaction
+    {
+        if (! $this->pendingTransactionId) {
+            return null;
+        }
+
+        $tenancy = Auth::user()->tenant?->currentTenancy();
+
+        if (! $tenancy) {
+            return null;
+        }
+
+        return MpesaTransaction::where('tenancy_id', $tenancy->id)->find($this->pendingTransactionId);
+    }
+
     public function checkStatus(): void
     {
         if (! $this->pendingTransactionId) {
             return;
         }
 
-        $transaction = MpesaTransaction::find($this->pendingTransactionId);
+        $transaction = $this->ownPendingTransaction();
 
         if (! $transaction) {
+            // Either genuinely gone, or the id in hand doesn't belong to
+            // this tenant's tenancy — both are treated identically: clear
+            // it and never touch whatever that id actually points to.
             $this->pendingTransactionId = null;
 
             return;
@@ -224,7 +258,7 @@ class PayDeposit extends Component
     {
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
-        $transaction = $this->pendingTransactionId ? MpesaTransaction::find($this->pendingTransactionId) : null;
+        $transaction = $this->ownPendingTransaction();
 
         $landlordId = $tenancy?->house?->block?->property?->landlord_id;
 

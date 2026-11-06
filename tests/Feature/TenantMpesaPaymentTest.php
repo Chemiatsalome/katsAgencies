@@ -658,26 +658,53 @@ class TenantMpesaPaymentTest extends TestCase
      * as a plain "Payment failed" with an immediate retry button, since
      * Safaricom's side of the push was actually approved.
      */
+    /**
+     * pendingTransactionId is #[Locked] (see Phase 4 audit Finding 1) — it
+     * can no longer be injected directly via Livewire's test ->set(), which
+     * is exactly the point (that's the same mechanism a forged client
+     * update would have used). Driving the real pay() flow instead, then
+     * mutating the resulting transaction to the flagged state, exercises
+     * the same render() path without relying on the now-blocked shortcut.
+     */
     public function test_a_flagged_transaction_shows_needs_verification_not_payment_failed(): void
     {
+        config([
+            'services.mpesa.consumer_key' => 'test-key',
+            'services.mpesa.consumer_secret' => 'test-secret',
+            'services.mpesa.shortcode' => '174379',
+            'services.mpesa.passkey' => 'test-passkey',
+            'services.mpesa.callback_url' => 'https://example.test/mpesa/callback',
+        ]);
+        Http::fake([
+            '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
+            '*/mpesa/stkpush/v1/processrequest' => Http::response([
+                'MerchantRequestID' => 'merchant-flagged-1',
+                'CheckoutRequestID' => 'checkout-flagged-ui-1',
+                'ResponseCode' => '0',
+                'ResponseDescription' => 'Success. Request accepted for processing',
+                'CustomerMessage' => 'Success. Request accepted for processing',
+            ]),
+        ]);
+
         $this->seed();
         $tenantUser = $this->makeTenantUser();
         $tenancy = Tenancy::active()->firstOrFail();
 
-        $transaction = MpesaTransaction::create([
-            'tenancy_id' => $tenancy->id,
-            'initiated_by' => $tenantUser->id,
-            'phone' => '254712345678',
-            'amount' => 5000,
-            'checkout_request_id' => 'checkout-flagged-ui-1',
+        $component = Livewire::actingAs($tenantUser)
+            ->test(PayRent::class)
+            ->set('phone', '0712345678')
+            ->set('amount', '5000')
+            ->call('pay');
+
+        $transaction = MpesaTransaction::where('tenancy_id', $tenancy->id)->firstOrFail();
+        $transaction->update([
             'status' => 'failed',
             'result_code' => 0,
             'result_desc' => 'Receipt already recorded (likely entered manually) — flagged, not credited again.',
         ]);
 
-        Livewire::actingAs($tenantUser)
-            ->test(PayRent::class)
-            ->set('pendingTransactionId', $transaction->id)
+        $component
+            ->call('checkStatus')
             ->assertSee('Needs verification')
             ->assertSee('pay again')
             ->assertDontSee('Payment failed')
@@ -691,26 +718,105 @@ class TenantMpesaPaymentTest extends TestCase
      */
     public function test_a_genuinely_failed_transaction_still_shows_payment_failed_with_retry(): void
     {
+        config([
+            'services.mpesa.consumer_key' => 'test-key',
+            'services.mpesa.consumer_secret' => 'test-secret',
+            'services.mpesa.shortcode' => '174379',
+            'services.mpesa.passkey' => 'test-passkey',
+            'services.mpesa.callback_url' => 'https://example.test/mpesa/callback',
+        ]);
+        Http::fake([
+            '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
+            '*/mpesa/stkpush/v1/processrequest' => Http::response([
+                'MerchantRequestID' => 'merchant-genuine-fail-1',
+                'CheckoutRequestID' => 'checkout-genuine-fail-ui-1',
+                'ResponseCode' => '0',
+                'ResponseDescription' => 'Success. Request accepted for processing',
+                'CustomerMessage' => 'Success. Request accepted for processing',
+            ]),
+        ]);
+
         $this->seed();
         $tenantUser = $this->makeTenantUser();
         $tenancy = Tenancy::active()->firstOrFail();
 
-        $transaction = MpesaTransaction::create([
-            'tenancy_id' => $tenancy->id,
-            'initiated_by' => $tenantUser->id,
-            'phone' => '254712345678',
-            'amount' => 5000,
-            'checkout_request_id' => 'checkout-genuine-fail-ui-1',
+        $component = Livewire::actingAs($tenantUser)
+            ->test(PayRent::class)
+            ->set('phone', '0712345678')
+            ->set('amount', '5000')
+            ->call('pay');
+
+        $transaction = MpesaTransaction::where('tenancy_id', $tenancy->id)->firstOrFail();
+        $transaction->update([
             'status' => 'failed',
             'result_code' => 1,
             'result_desc' => 'The balance on the customer\'s account is insufficient.',
         ]);
 
-        Livewire::actingAs($tenantUser)
-            ->test(PayRent::class)
-            ->set('pendingTransactionId', $transaction->id)
+        $component
+            ->call('checkStatus')
             ->assertSee('Payment failed')
             ->assertSee('Try Again')
             ->assertDontSee('Needs verification');
+    }
+
+    /**
+     * Phase 4 audit, Finding 3 (Medium): "Submit for Confirmation" had no
+     * double-click guard, unlike "Pay Now" right above it in the same
+     * form. The actual disabling is client-side (wire:loading is an
+     * Alpine/Livewire JS behavior PHPUnit can't observe mid-request), so
+     * what's verified here is the markup itself — the guard is present
+     * and scoped to exactly this action — plus that it never interferes
+     * with unrelated actions or with correcting and resubmitting after a
+     * validation error.
+     */
+    public function test_submit_for_confirmation_button_carries_a_loading_guard_scoped_to_itself(): void
+    {
+        $this->seed();
+        $user = $this->makeTenantUser();
+
+        $html = Livewire::actingAs($user)
+            ->test(PayRent::class)
+            ->call('openOfflineForm')
+            ->html();
+
+        $this->assertStringContainsString('wire:loading.attr="disabled" wire:target="submitOfflinePayment"', $html);
+        $this->assertStringContainsString('Submit for Confirmation', $html);
+
+        // The unrelated Cancel button must not carry the same (or any) guard.
+        $this->assertMatchesRegularExpression('/<button type="button" wire:click="cancelOfflineForm"[^>]*>/', $html);
+        $cancelButtonTag = (string) preg_replace('/.*(<button type="button" wire:click="cancelOfflineForm"[^>]*>).*/s', '$1', $html);
+        $this->assertStringNotContainsString('wire:loading', $cancelButtonTag);
+    }
+
+    public function test_an_invalid_offline_submission_can_be_corrected_and_resubmitted(): void
+    {
+        $this->seed();
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->firstOrFail();
+
+        $component = Livewire::actingAs($user)
+            ->test(PayRent::class)
+            ->call('openOfflineForm')
+            ->set('offline_method', 'bank')
+            ->set('offline_amount', '0') // fails min:1
+            ->set('offline_payment_date', now()->format('Y-m-d'))
+            ->call('submitOfflinePayment')
+            ->assertHasErrors('offline_amount');
+
+        $this->assertDatabaseMissing('payments', ['tenancy_id' => $tenancy->id, 'source' => 'tenant_submitted_offline']);
+
+        // Correcting the same field and resubmitting must succeed normally.
+        $component
+            ->set('offline_amount', '2500')
+            ->call('submitOfflinePayment')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('payments', [
+            'tenancy_id' => $tenancy->id,
+            'source' => 'tenant_submitted_offline',
+            'status' => 'awaiting_landlord_confirmation',
+            'amount' => 2500,
+        ]);
     }
 }

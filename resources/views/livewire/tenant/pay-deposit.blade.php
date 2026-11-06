@@ -95,7 +95,10 @@
                                     <x-input-error :messages="$errors->get('offline_evidence')" class="mt-1" />
                                 </div>
                                 <div class="flex items-center gap-3">
-                                    <x-primary-button type="submit">Submit for Confirmation</x-primary-button>
+                                    <x-primary-button type="submit" wire:loading.attr="disabled" wire:target="submitOfflinePayment">
+                                        <span wire:loading.remove wire:target="submitOfflinePayment">Submit for Confirmation</span>
+                                        <span wire:loading wire:target="submitOfflinePayment">Submitting…</span>
+                                    </x-primary-button>
                                     <button type="button" wire:click="cancelOfflineForm" class="text-sm text-brand-slate hover:text-charcoal">Cancel</button>
                                 </div>
                             </form>
