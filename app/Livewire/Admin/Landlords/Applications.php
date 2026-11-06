@@ -3,10 +3,12 @@
 namespace App\Livewire\Admin\Landlords;
 
 use App\Mail\LandlordApplicationApprovedMail;
+use App\Mail\LandlordApplicationApprovedPendingVerificationMail;
 use App\Mail\LandlordApplicationRejectedMail;
 use App\Models\RejectedLandlordApplication;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -33,12 +35,45 @@ class Applications extends Component
 
     public string $rejectionReason = '';
 
+    /**
+     * Approval and email verification are independent requirements (see
+     * User::isAwaitingEmailVerification()) — activating regardless of
+     * verification status is what used to let an approval email tell a
+     * landlord to log in right before the 'verified' gate turned around and
+     * blocked them. So: only flip `status` to active here if they've
+     * already verified; otherwise record the approval (`approved_at`) and
+     * leave activation to whichever confirms their email next
+     * (ActivateApprovedLandlordOnVerification) — and email them the actual
+     * remaining step instead of a login link that wouldn't yet work.
+     */
     public function approve(int $userId): void
     {
         $user = User::role('landlord')->whereNull('approved_at')->findOrFail($userId);
-        $user->update(['status' => 'active', 'approved_at' => now()]);
+        $verified = $user->hasVerifiedEmail();
 
-        Mail::to($user->email)->send(new LandlordApplicationApprovedMail($user->name, route('login')));
+        $user->update([
+            'approved_at' => now(),
+            'status' => $verified ? 'active' : $user->status,
+        ]);
+
+        // The approval itself (above) is what actually grants access —
+        // never roll it back over a transport hiccup on the email that
+        // merely announces it. The admin still needs to know the email
+        // didn't go out, since nothing else will tell the applicant their
+        // account is ready.
+        try {
+            Mail::to($user->email)->send(
+                $verified
+                    ? new LandlordApplicationApprovedMail($user->name, route('login'))
+                    : new LandlordApplicationApprovedPendingVerificationMail($user->name, $user->verificationUrl())
+            );
+
+            session()->flash('status', "{$user->name}'s application was approved and they've been emailed.");
+        } catch (\Throwable $e) {
+            Log::warning('Landlord application approval email failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+
+            session()->flash('status', "{$user->name}'s application was approved, but the notification email failed to send — let them know directly.");
+        }
     }
 
     public function openRejectForm(int $userId): void
@@ -74,10 +109,22 @@ class Applications extends Component
         $contactEmail = config('mail.support_contact_email');
 
         // Told why, and where to go if they think it's wrong — a hard
-        // delete with zero explanation was the thing being fixed here.
-        Mail::to($user->email)->send(
-            new LandlordApplicationRejectedMail($user->name, $this->rejectionReason, $contactEmail)
-        );
+        // delete with zero explanation was the thing being fixed here. Sent
+        // before any destructive write below: if it can't be delivered, the
+        // applicant must not be wiped out with no record of why, so this
+        // bails out and leaves the application pending for a retry instead
+        // of silently deleting them in the dark.
+        try {
+            Mail::to($user->email)->send(
+                new LandlordApplicationRejectedMail($user->name, $this->rejectionReason, $contactEmail)
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Landlord application rejection email failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+
+            session()->flash('status', "Couldn't email {$user->name} the rejection reason, so the application was left pending — try again.");
+
+            return;
+        }
 
         // A snapshot of who they said they were survives the account
         // being deleted, so a repeat attempt under a different email can
@@ -111,8 +158,16 @@ class Applications extends Component
             ->latest()
             ->paginate(15);
 
+        // Every currently-pending applicant, not just this page — two
+        // simultaneous applications matching each other must be flagged
+        // even when pagination splits them onto different pages.
+        $allPending = User::role('landlord')
+            ->where('status', 'inactive')
+            ->whereNull('approved_at')
+            ->get(['id', 'name', 'email', 'phone', 'national_id']);
+
         $duplicateSignalFor = $pending->getCollection()
-            ->mapWithKeys(fn (User $applicant) => [$applicant->id => $this->duplicateSignalFor($applicant, $pending->getCollection())]);
+            ->mapWithKeys(fn (User $applicant) => [$applicant->id => $this->duplicateSignalFor($applicant, $allPending)]);
 
         return view('livewire.admin.landlords.applications', [
             'pending' => $pending,

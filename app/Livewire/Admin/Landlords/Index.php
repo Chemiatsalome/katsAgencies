@@ -2,9 +2,12 @@
 
 namespace App\Livewire\Admin\Landlords;
 
+use App\Mail\LandlordApplicationApprovedPendingVerificationMail;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\NotificationService;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Livewire\Component;
 use Livewire\WithPagination;
 use Livewire\Attributes\Layout;
@@ -24,6 +27,30 @@ class Index extends Component
 
         $user = User::role('landlord')->findOrFail($userId);
         $previousStatus = $user->status;
+
+        // Reactivating a landlord who was approved but never finished
+        // verifying their email must not grant access via this side door
+        // any more than Applications::approve() does (see
+        // User::isAwaitingEmailVerification()) — record that this admin
+        // intends to approve them (approved_at) but leave the actual
+        // status flip to whichever confirms their email next.
+        if ($status === 'active' && ! $user->hasVerifiedEmail()) {
+            $user->update(['approved_at' => $user->approved_at ?? now()]);
+
+            try {
+                Mail::to($user->email)->send(
+                    new LandlordApplicationApprovedPendingVerificationMail($user->name, $user->verificationUrl())
+                );
+
+                session()->flash('status', "{$user->name}'s email isn't verified yet, so they can't be activated yet — we've emailed them a verification link instead. They'll activate automatically once they confirm it.");
+            } catch (\Throwable $e) {
+                Log::warning('Landlord reactivation verification email failed', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+
+                session()->flash('status', "{$user->name}'s email isn't verified yet, so they can't be activated yet — but the verification email failed to send. Let them know directly, or ask them to use \"Resend verification\" on their own login attempt.");
+            }
+
+            return;
+        }
 
         $user->update([
             'status' => $status,
