@@ -13,9 +13,27 @@
                     subtitle="Your rent, payments and maintenance requests — all in one place."
                 />
 
-                @if (! $tenancy)
+                @if (! $tenancy && ! $pastTenancy)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-brand-slate">
                         No active tenancy is linked to your account yet. Please contact your landlord or the admin.
+                    </div>
+                @elseif (! $tenancy)
+                    <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-sm text-brand-slate">Former Home</p>
+                                <p class="text-lg font-semibold text-charcoal">
+                                    {{ $pastTenancy->house->block->property->name }}, Block {{ $pastTenancy->house->block->name }}, Unit {{ $pastTenancy->house->house_number }}
+                                </p>
+                                <p class="text-xs text-brand-slate mt-1">
+                                    Tenancy ended{{ $pastTenancy->move_out_date ? ' on '.$pastTenancy->move_out_date->format('d M Y') : '' }}.
+                                </p>
+                            </div>
+                            <x-status-badge :status="$pastTenancy->status" />
+                        </div>
+                        <a href="{{ route('tenant.deposit') }}" wire:navigate class="inline-block text-sm text-teal hover:underline">
+                            Track your deposit refund &rarr;
+                        </a>
                     </div>
                 @else
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 flex items-center justify-between">
@@ -91,7 +109,14 @@
                                     @forelse ($recentPayments as $payment)
                                         <tr>
                                             <td class="px-5 py-2 text-brand-slate">{{ $payment->payment_date->format('d M Y') }}</td>
-                                            <td class="px-5 py-2 text-brand-slate">{{ $payment->isOpeningBalance() ? 'Historical balance (not a transaction)' : ucfirst($payment->method) }}</td>
+                                            <td class="px-5 py-2 text-brand-slate">
+                                                {{ $payment->isOpeningBalance() ? 'Historical balance (not a transaction)' : ucfirst($payment->method) }}
+                                                @if ($payment->needsLandlordConfirmation())
+                                                    <span class="text-warning font-medium">(awaiting confirmation)</span>
+                                                @elseif ($payment->isDisputed())
+                                                    <span class="text-danger font-medium">(disputed)</span>
+                                                @endif
+                                            </td>
                                             <td class="px-5 py-2 text-right text-charcoal">KSh {{ number_format($payment->amount, 2) }}</td>
                                         </tr>
                                     @empty
@@ -101,6 +126,25 @@
                                     @endforelse
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+
+                    <div class="bg-white shadow-sm rounded-lg border border-brand-border">
+                        <div class="px-5 py-4 border-b border-brand-border flex items-center justify-between">
+                            <h3 class="text-sm font-semibold text-brand-slate">Maintenance Requests</h3>
+                            <a href="{{ route('tenant.maintenance.index') }}" wire:navigate class="text-xs text-teal hover:underline">
+                                View all{{ $openComplaintsCount > 0 ? " ({$openComplaintsCount} open)" : '' }}
+                            </a>
+                        </div>
+                        <div class="divide-y divide-gray-100">
+                            @forelse ($recentComplaints as $complaint)
+                                <a href="{{ route('tenant.maintenance.show', $complaint) }}" wire:navigate class="flex items-center justify-between px-5 py-2.5 text-sm hover:bg-offwhite">
+                                    <span class="text-charcoal">{{ $complaint->subject }}</span>
+                                    <x-status-badge :status="\App\Livewire\Tenant\Maintenance\Index::STATUS_MAP[$complaint->status] ?? $complaint->status" />
+                                </a>
+                            @empty
+                                <p class="px-5 py-6 text-center text-brand-slate text-sm">No maintenance requests yet.</p>
+                            @endforelse
                         </div>
                     </div>
                 @endif
