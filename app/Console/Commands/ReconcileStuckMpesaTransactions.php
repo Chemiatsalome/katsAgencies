@@ -41,6 +41,20 @@ class ReconcileStuckMpesaTransactions extends Command
                 $resultCode = (int) $result['ResultCode'];
                 $resultDesc = $result['ResultDesc'] ?? null;
 
+                if ($resultCode === 0 && $transaction->purpose === 'sms_topup') {
+                    // Unlike a rent/deposit Payment, an SMS wallet credit
+                    // carries no uniqueness guard on its (nullable) receipt
+                    // number — it's informational, not a dedup key — so
+                    // there's no audit-trail risk in crediting straight from
+                    // Safaricom's own confirmation here. Routed through the
+                    // same processResult() the real callback uses, so the
+                    // locking/idempotency guarantees still apply.
+                    $callbackController->processResult($transaction->checkout_request_id, $resultCode, $resultDesc);
+                    $resolved++;
+
+                    continue;
+                }
+
                 if ($resultCode === 0) {
                     // Safaricom confirms this succeeded, but the status
                     // query carries no CallbackMetadata — no M-Pesa receipt
@@ -97,7 +111,9 @@ class ReconcileStuckMpesaTransactions extends Command
             return;
         }
 
-        app(NotificationService::class)->notify(
+        $notifications = app(NotificationService::class);
+
+        $notifications->notify(
             $tenancy->house->block->property->landlord,
             'mpesa_callback_missed',
             'An M-Pesa Payment May Need Manual Verification',
@@ -106,5 +122,21 @@ class ReconcileStuckMpesaTransactions extends Command
             ['in_app', 'email'],
             $tenancy,
         );
+
+        // Previously silent on the tenant's side entirely — if they'd
+        // already closed the app (the only other place this ever showed
+        // was the ephemeral pay page's own live status, gone on reload),
+        // they had no way to know their money may have gone through and
+        // that paying again could double-charge them.
+        if ($tenancy->tenant) {
+            $notifications->notify(
+                $tenancy->tenant,
+                'mpesa_payment_needs_verification',
+                'Payment Needs Verification',
+                'Your M-Pesa payment of KSh '.number_format((float) $transaction->amount, 2)." may have gone through, but we're still confirming it with your landlord — please don't pay again until this is resolved.",
+                ['in_app'],
+                $tenancy,
+            );
+        }
     }
 }

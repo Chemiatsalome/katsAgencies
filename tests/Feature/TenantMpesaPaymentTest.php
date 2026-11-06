@@ -10,6 +10,7 @@ use App\Models\RentCharge;
 use App\Models\Setting;
 use App\Models\Tenancy;
 use App\Models\User;
+use App\Services\PaymentGatewayService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
@@ -42,7 +43,24 @@ class TenantMpesaPaymentTest extends TestCase
         $user->syncRoles(['tenant']);
         $tenant->update(['user_id' => $user->id]);
 
+        $this->confirmPlatformCollectionFor($tenancy);
+
         return $user;
+    }
+
+    /**
+     * STK push is only ever offered once a landlord has explicitly chosen a
+     * collection method (see PaymentGatewayService::collectionModeFor()) —
+     * a freshly seeded test landlord hasn't, by design, same as a real new
+     * landlord. Tests that are actually exercising M-Pesa mechanics (not
+     * onboarding itself) opt their landlord into 'platform' here, matching
+     * what was the unconditional default before onboarding existed.
+     */
+    private function confirmPlatformCollectionFor(Tenancy $tenancy): void
+    {
+        $landlordId = $tenancy->house->block->property->landlord_id;
+
+        app(PaymentGatewayService::class)->confirmCollectionMethod($landlordId, 'platform');
     }
 
     public function test_tenant_can_initiate_an_stk_push_and_it_records_a_pending_transaction(): void
@@ -514,8 +532,27 @@ class TenantMpesaPaymentTest extends TestCase
 
         $transaction->refresh();
         $this->assertEquals('failed', $transaction->status);
+        $this->assertEquals(0, $transaction->result_code);
         $this->assertNull($transaction->payment_id);
         $this->assertDatabaseMissing('payments', ['reference_number' => 'MISMATCH1']);
+
+        // Previously silent for both parties — only a log line. A flagged
+        // callback with Safaricom's own result code 0 must still reach the
+        // tenant and landlord, since it's never a plain decline.
+        $tenancy->loadMissing('tenant', 'house.block.property.landlord');
+
+        $this->assertTrue(
+            AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+                ->where('notifiable_id', $tenancy->tenant->id)
+                ->where('event_type', 'mpesa_payment_needs_verification')
+                ->exists()
+        );
+        $this->assertTrue(
+            AppNotification::where('notifiable_type', $tenancy->house->block->property->landlord->getMorphClass())
+                ->where('notifiable_id', $tenancy->house->block->property->landlord->id)
+                ->where('event_type', 'mpesa_callback_discrepancy')
+                ->exists()
+        );
     }
 
     public function test_a_callback_whose_receipt_was_already_recorded_manually_is_not_credited_again(): void
@@ -569,6 +606,17 @@ class TenantMpesaPaymentTest extends TestCase
 
         $this->assertEquals(1, Payment::where('reference_number', 'MANUAL001')->count());
         $this->assertEquals('failed', $transaction->fresh()->status);
+        $this->assertEquals(0, $transaction->fresh()->result_code);
+
+        // The money already landed via the manual entry — the tenant must
+        // never be told this attempt "failed" and must never be invited to
+        // pay a second time for the same receipt.
+        $this->assertTrue(
+            AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+                ->where('notifiable_id', $tenancy->tenant->id)
+                ->where('event_type', 'mpesa_payment_needs_verification')
+                ->exists()
+        );
     }
 
     public function test_recording_a_payment_with_an_already_used_mpesa_reference_number_is_rejected(): void
@@ -602,5 +650,67 @@ class TenantMpesaPaymentTest extends TestCase
             ->assertHasErrors('reference_number');
 
         $this->assertEquals(1, Payment::where('reference_number', 'TAKEN001')->count());
+    }
+
+    /**
+     * A transaction flagged by the callback (amount mismatch or duplicate
+     * receipt — both carry Safaricom's own result code 0) must never render
+     * as a plain "Payment failed" with an immediate retry button, since
+     * Safaricom's side of the push was actually approved.
+     */
+    public function test_a_flagged_transaction_shows_needs_verification_not_payment_failed(): void
+    {
+        $this->seed();
+        $tenantUser = $this->makeTenantUser();
+        $tenancy = Tenancy::active()->firstOrFail();
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => $tenantUser->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'checkout_request_id' => 'checkout-flagged-ui-1',
+            'status' => 'failed',
+            'result_code' => 0,
+            'result_desc' => 'Receipt already recorded (likely entered manually) — flagged, not credited again.',
+        ]);
+
+        Livewire::actingAs($tenantUser)
+            ->test(PayRent::class)
+            ->set('pendingTransactionId', $transaction->id)
+            ->assertSee('Needs verification')
+            ->assertSee('pay again')
+            ->assertDontSee('Payment failed')
+            ->assertDontSee('Try Again');
+    }
+
+    /**
+     * A genuine decline (non-zero result code) must keep showing "Payment
+     * failed" with the existing retry button — only the ambiguous,
+     * flagged-but-approved case above changes.
+     */
+    public function test_a_genuinely_failed_transaction_still_shows_payment_failed_with_retry(): void
+    {
+        $this->seed();
+        $tenantUser = $this->makeTenantUser();
+        $tenancy = Tenancy::active()->firstOrFail();
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => $tenantUser->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'checkout_request_id' => 'checkout-genuine-fail-ui-1',
+            'status' => 'failed',
+            'result_code' => 1,
+            'result_desc' => 'The balance on the customer\'s account is insufficient.',
+        ]);
+
+        Livewire::actingAs($tenantUser)
+            ->test(PayRent::class)
+            ->set('pendingTransactionId', $transaction->id)
+            ->assertSee('Payment failed')
+            ->assertSee('Try Again')
+            ->assertDontSee('Needs verification');
     }
 }

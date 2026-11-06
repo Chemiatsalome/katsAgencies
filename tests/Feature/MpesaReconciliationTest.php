@@ -159,6 +159,16 @@ class MpesaReconciliationTest extends TestCase
                 ->where('event_type', 'mpesa_callback_missed')
                 ->exists()
         );
+
+        // Previously silent on the tenant's side entirely — if they'd
+        // already closed the app, they had no way to know their money may
+        // have gone through and that paying again could double-charge them.
+        $this->assertTrue(
+            AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+                ->where('notifiable_id', $tenancy->tenant->id)
+                ->where('event_type', 'mpesa_payment_needs_verification')
+                ->exists()
+        );
     }
 
     public function test_reconciliation_times_out_a_transaction_safaricom_has_no_answer_for_after_ten_minutes(): void

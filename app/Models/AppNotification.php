@@ -129,7 +129,7 @@ class AppNotification extends Model
             'due_day_change_requested' => $viewerIsLandlordOrManager && $this->related_type === DueDayChangeRequest::class && $this->related
                 ? route('manage.tenancies.show', $this->related->tenancy_id)
                 : null,
-            'contract_signed', 'tenant_paid_mpesa', 'tenant_registered', 'tenancy_change_request', 'renewal_request', 'mpesa_callback_missed' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
+            'contract_signed', 'tenant_paid_mpesa', 'tenant_registered', 'tenancy_change_request', 'renewal_request', 'mpesa_callback_missed', 'mpesa_callback_discrepancy' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
                 ? route('manage.tenancies.show', $this->related_id)
                 : null,
             'tenant_profile_updated' => $viewerIsLandlordOrManager && $this->related_type === Tenant::class
@@ -162,7 +162,11 @@ class AppNotification extends Model
             // Tenant side — both land on the page where they'd actually
             // follow up: rent/arrears-related notices go to My Rent, the
             // due-date decision (made on the Contract page) goes back there.
-            'late_fee_charged', 'late_fee_waiver_decided', 'rent_reminder', 'landlord_note' => $viewerIsTenant ? route('tenant.rent') : null,
+            // Sent for both rent and deposit M-Pesa attempts (the controller
+            // helper that raises this doesn't track which) — My Rent is the
+            // safe default landing spot either way; there's nothing to
+            // retry from here, just their own standing balance.
+            'late_fee_charged', 'late_fee_waiver_decided', 'rent_reminder', 'landlord_note', 'mpesa_payment_needs_verification' => $viewerIsTenant ? route('tenant.rent') : null,
             // Routed straight to the page they'd actually retry from, not
             // just a status page — nothing was charged, so there's nothing
             // to review, only a reason and a way to try again.

@@ -9,6 +9,7 @@ use App\Models\Tenancy;
 use App\Services\DepositService;
 use App\Services\NotificationService;
 use App\Services\PaymentGatewayService;
+use App\Services\SmsWalletService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -123,6 +124,12 @@ class MpesaCallbackController extends Controller
      */
     private function notifyFailure(MpesaTransaction $transaction, int $resultCode, ?string $resultDesc): void
     {
+        if ($transaction->purpose === 'sms_topup') {
+            app(SmsWalletService::class)->notifyTopUpFailure($transaction, $resultCode === 1032, $resultDesc);
+
+            return;
+        }
+
         $tenancy = $transaction->tenancy()->with('tenant')->first();
 
         if (! $tenancy || ! $tenancy->tenant) {
@@ -169,6 +176,14 @@ class MpesaCallbackController extends Controller
                 'result_desc' => 'Amount mismatch between STK request and callback — flagged, not credited.',
             ]);
 
+            // Previously silent — neither party was ever told this attempt
+            // was refused, only a log line a developer might never read.
+            $this->notifyLedgerDiscrepancy(
+                $transaction,
+                "Your M-Pesa payment attempt of KSh ".number_format((float) $transaction->amount, 2)." could not be verified automatically, so nothing has been credited. Nothing was charged on our end — if your M-Pesa statement shows otherwise, contact your landlord.",
+                "A tenant's M-Pesa payment attempt of KSh ".number_format((float) $transaction->amount, 2)." was flagged (settled amount didn't match the request) and was not credited — please check with the tenant and record it manually if it genuinely went through.",
+            );
+
             return;
         }
 
@@ -196,6 +211,21 @@ class MpesaCallbackController extends Controller
                 'status' => 'failed',
                 'result_desc' => 'Receipt already recorded (likely entered manually) — flagged, not credited again.',
             ]);
+
+            // This path means the money already landed on the ledger
+            // through the other entry — the tenant must never be told this
+            // "failed" (it didn't), nor invited to pay a second time.
+            $this->notifyLedgerDiscrepancy(
+                $transaction,
+                "Your M-Pesa payment of KSh ".number_format((float) $transaction->amount, 2)." (receipt {$receiptNumber}) was already recorded on your account — no action needed.",
+                "A tenant's M-Pesa payment of KSh ".number_format((float) $transaction->amount, 2)." (receipt {$receiptNumber}) arrived twice — once already recorded, once via this callback. The callback was not credited again; no action needed unless the existing record looks wrong.",
+            );
+
+            return;
+        }
+
+        if ($transaction->purpose === 'sms_topup') {
+            app(SmsWalletService::class)->confirmTopUp($transaction, $amount, $receiptNumber, $transactionDate);
 
             return;
         }
@@ -242,6 +272,18 @@ class MpesaCallbackController extends Controller
         }
 
         $payments = $this->allocatePayment($tenancy, $amount, $receiptNumber, $transactionDate, $transaction->initiated_by, $transaction->collection_mode);
+
+        // The first real direct-collection payment to actually settle is
+        // the only honest proof this system has that a landlord's own
+        // shortcode/passkey genuinely work — see
+        // PaymentGatewayService::directCollectionStatus()'s docblock.
+        if ($transaction->collection_mode === 'direct') {
+            $landlordId = $tenancy->house->block->property->landlord_id ?? null;
+
+            if ($landlordId) {
+                app(PaymentGatewayService::class)->markDirectCollectionActive($landlordId);
+            }
+        }
 
         // mpesa_transactions.payment_id is a single FK and stays
         // legacy/first-only (existing code relies on it meaning "the
@@ -300,6 +342,35 @@ class MpesaCallbackController extends Controller
             // waiting on anyone's confirmation.
             'status' => 'confirmed',
         ]);
+    }
+
+    /**
+     * A successful-per-Safaricom callback that this system still refused to
+     * credit (amount mismatch or duplicate receipt, both above) — distinct
+     * from a genuine decline/cancellation, so both the tenant and landlord
+     * need to hear the actual nuance, not silence or a flat "it failed".
+     * No-op for sms_topup (no tenant/tenancy on that purpose) and for any
+     * transaction whose tenancy/tenant has since been removed.
+     */
+    private function notifyLedgerDiscrepancy(MpesaTransaction $transaction, string $tenantBody, string $landlordBody): void
+    {
+        if ($transaction->purpose === 'sms_topup') {
+            return;
+        }
+
+        $tenancy = $transaction->tenancy()->with('tenant', 'house.block.property.landlord')->first();
+
+        if (! $tenancy || ! $tenancy->tenant) {
+            return;
+        }
+
+        $notifications = app(NotificationService::class);
+
+        $notifications->notify($tenancy->tenant, 'mpesa_payment_needs_verification', 'Payment Needs Verification', $tenantBody, ['in_app'], $tenancy);
+
+        if ($tenancy->house?->block?->property?->landlord) {
+            $notifications->notify($tenancy->house->block->property->landlord, 'mpesa_callback_discrepancy', 'M-Pesa Payment Flagged For Review', $landlordBody, ['in_app'], $tenancy);
+        }
     }
 
     private function ack(): JsonResponse

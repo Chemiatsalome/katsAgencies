@@ -22,7 +22,17 @@
                                 or <a href="{{ route('tenant.deposit') }}" wire:navigate class="text-teal hover:underline font-medium">view details</a>.
                             </div>
                         @endif
-                        <form wire:submit="pay" class="space-y-4">
+                        @if (! $mpesaAvailable)
+                            <div class="rounded-md bg-navy-light border border-navy/20 text-charcoal text-sm px-4 py-3">
+                                <p class="font-medium">Your landlord hasn't set up online M-Pesa payment for this property.</p>
+                                <p class="mt-1">
+                                    You can still use this page as a record of your rent — pay your landlord however you normally do (cash, bank, their own M-Pesa till or paybill), then tap
+                                    <span class="font-medium">"Already paid another way"</span> below to log it. Once your landlord confirms it, it'll reflect in your balance here.
+                                </p>
+                            </div>
+                        @endif
+
+                        <form wire:submit="pay" class="space-y-4 {{ $mpesaAvailable ? '' : 'opacity-50 pointer-events-none' }}">
                             <div>
                                 <x-input-label for="phone" value="M-Pesa Phone Number" />
                                 <x-text-input id="phone" type="text" wire:model="phone" placeholder="07XXXXXXXX" class="mt-1 block w-full" />
@@ -140,6 +150,21 @@
                             <p class="text-sm text-brand-slate">
                                 KSh {{ number_format($transaction->amount, 2) }} · Receipt {{ $transaction->mpesa_receipt_number }}
                             </p>
+                            <a href="{{ route('tenant.dashboard') }}" wire:navigate class="inline-block text-sm text-teal hover:underline">Back to Dashboard</a>
+                        </div>
+                    @elseif ($transaction->status === 'failed' && (int) $transaction->result_code === 0)
+                        {{-- Safaricom's own result code was 0 (the push was approved) — our
+                             ledger still flagged this one (amount mismatch, or the same receipt
+                             already recorded another way) rather than crediting it blindly. This
+                             is never a plain decline, so it must never say "failed" or invite an
+                             immediate retry that could double-charge the tenant. --}}
+                        <div class="text-center space-y-3 py-4">
+                            <div class="mx-auto h-10 w-10 rounded-full bg-warning/10 text-warning flex items-center justify-center"><x-nav-icon name="warning" class="h-5 w-5" /></div>
+                            <p class="text-sm font-medium text-charcoal">Needs verification</p>
+                            @if ($transaction->result_desc)
+                                <p class="text-sm text-brand-slate">{{ $transaction->result_desc }}</p>
+                            @endif
+                            <p class="text-sm text-brand-slate">Please don't pay again until this is resolved — contact your landlord if you're not sure.</p>
                             <a href="{{ route('tenant.dashboard') }}" wire:navigate class="inline-block text-sm text-teal hover:underline">Back to Dashboard</a>
                         </div>
                     @else
