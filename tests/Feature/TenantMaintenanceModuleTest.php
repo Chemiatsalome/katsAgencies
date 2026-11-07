@@ -64,6 +64,33 @@ class TenantMaintenanceModuleTest extends TestCase
         );
     }
 
+    /**
+     * Phase 7A, F2: Create::CATEGORIES already offered 'appliance' as a
+     * selectable option, but complaints.category never included it in its
+     * enum — submitting threw a data-truncation error under MySQL strict
+     * mode before the enum was widened.
+     */
+    public function test_tenant_can_submit_an_appliance_complaint_and_the_category_persists(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+
+        Livewire::actingAs($user)
+            ->test(Create::class)
+            ->set('category', 'appliance')
+            ->set('subject', 'Fridge not cooling')
+            ->set('description', 'The fridge stopped cooling overnight.')
+            ->set('priority', 'normal')
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('complaints', [
+            'subject' => 'Fridge not cooling',
+            'category' => 'appliance',
+        ]);
+    }
+
     public function test_tenant_cannot_submit_without_an_active_tenancy(): void
     {
         $this->seed();

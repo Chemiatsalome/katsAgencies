@@ -523,7 +523,11 @@
                     <h3 class="text-sm font-semibold text-charcoal">Deduct from Tenant's Deposit</h3>
                     <p class="text-xs text-brand-slate">
                         {{ $deductingTask->title }}, KSh {{ number_format($deductingTask->actual_cost, 2) }}.
-                        The tenant confirmed this fix on {{ $deductingTask->complaint->tenant_confirmed_at->format('d M Y') }}.
+                        @if ($deductingTask->complaint)
+                            The tenant confirmed this fix on {{ $deductingTask->complaint->tenant_confirmed_at?->format('d M Y') ?? 'an unspecified date' }}.
+                        @else
+                            This task was logged directly, with no linked tenant complaint to confirm.
+                        @endif
                     </p>
                     <div>
                         <x-input-label for="deductingTaskEvidence" value="Supporting Evidence (optional, PDF/JPG/PNG)" />

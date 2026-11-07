@@ -201,6 +201,13 @@ class Index extends Component
     {
         $complaint = Complaint::findOrFail($complaintId);
         $this->authorize('update', $complaint);
+        // Phase 7A, F9: this creates a MaintenanceTask, which is a distinct
+        // action from "can respond to this complaint" — a manager granted
+        // complaints.respond but not maintenance.create used to be able to
+        // create tasks through this path alone, bypassing the permission
+        // the landlord specifically withheld. Both authorizations must pass
+        // before anything is read or written below.
+        $this->authorize('create', MaintenanceTask::class);
 
         // Without this, a double-click (or any repeated request before the
         // button's disabled state takes effect) created two identical
@@ -293,7 +300,9 @@ class Index extends Component
     public function markReviewed(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: a status-progression step toward resolution,
+        // not a vendor assignment or an appointment — gated on resolve.
+        $this->authorize('resolve', $task);
 
         if (! in_array($task->status, MaintenanceTask::OPEN_STATUSES, true)) {
             return;
@@ -307,7 +316,8 @@ class Index extends Component
     public function startProgress(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: same reasoning as markReviewed() — gated on resolve.
+        $this->authorize('resolve', $task);
 
         if (! in_array($task->status, MaintenanceTask::OPEN_STATUSES, true)) {
             return;
@@ -321,7 +331,8 @@ class Index extends Component
     public function closeTask(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: finalizing/closing is resolution authority.
+        $this->authorize('resolve', $task);
         $task->update(['status' => 'closed']);
         $this->clearComplaintNotification($task->complaint);
         $this->notifyTenantOfStatusChange($task, 'Your maintenance request has been closed.');
@@ -382,7 +393,11 @@ class Index extends Component
     public function openAssignForm(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: this form edits both the vendor and the
+        // schedule — either delegable authority is enough to open it; which
+        // one saveAssign() actually requires depends on which field the
+        // manager changes.
+        abort_unless(Auth::user()->can('assign', $task) || Auth::user()->can('schedule', $task), 403);
 
         $this->activeTaskId = $taskId;
         $this->assign_vendor_id = $task->vendor_id;
@@ -396,7 +411,41 @@ class Index extends Component
     public function saveAssign(): void
     {
         $task = MaintenanceTask::findOrFail($this->activeTaskId);
-        $this->authorize('update', $task);
+
+        // Phase 7A, finding 4: this one form edits three independently
+        // delegable things — who's assigned, when it's scheduled, and (via
+        // the "record expense now" toggle) an immediate financial entry.
+        // Each is gated by exactly the permission that specific change
+        // requires, never by one blanket check — a scheduling-only manager
+        // touching only the date must never be able to also silently swap
+        // out the assigned vendor, and vice versa. Compared against the
+        // task's current values (not just whether the submitted value is
+        // non-empty) so clearing an existing vendor/date still requires the
+        // same authority that setting one would.
+        $vendorChanging = (string) ($this->assign_vendor_id ?: '') !== (string) ($task->vendor_id ?: '');
+        $scheduleChanging = ($this->assign_scheduled_date ?: '') !== ($task->scheduled_date?->format('Y-m-d') ?: '');
+
+        if ($vendorChanging) {
+            $this->authorize('assign', $task);
+        }
+
+        if ($scheduleChanging) {
+            $this->authorize('schedule', $task);
+        }
+
+        if ($this->assign_record_expense_now) {
+            // Phase 7A follow-up: immediately records an Expense — cost-
+            // recording authority specifically, not operational resolve.
+            $this->authorize('manage_costs', $task);
+        }
+
+        if (! $vendorChanging && ! $scheduleChanging && ! $this->assign_record_expense_now) {
+            // Nothing identity- or schedule-relevant is changing (e.g. only
+            // the estimated-cost figure) — still a write to this form, so
+            // require at least the narrower of the two authorities it's
+            // otherwise about.
+            $this->authorize('assign', $task);
+        }
 
         if (! in_array($task->status, MaintenanceTask::OPEN_STATUSES, true)) {
             $this->showAssignForm = false;
@@ -443,7 +492,8 @@ class Index extends Component
     public function openCompleteForm(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: completion records cost/resolution — resolve.
+        $this->authorize('resolve', $task);
 
         $this->activeTaskId = $taskId;
         $this->complete_actual_cost = ($task->actual_cost ?: $task->estimated_cost) ? (string) ($task->actual_cost ?: $task->estimated_cost) : '';
@@ -456,7 +506,9 @@ class Index extends Component
     public function complete(): void
     {
         $task = MaintenanceTask::findOrFail($this->activeTaskId);
-        $this->authorize('update', $task);
+        // Phase 7A, finding 4: matches PermissionSeeder's own documented
+        // intent for maintenance.resolve ("mark maintenance resolved").
+        $this->authorize('resolve', $task);
 
         // A task re-completed after the tenant reopened it already has its
         // first expense on record (expense_id set) — re-running
@@ -466,6 +518,30 @@ class Index extends Component
         // inferred, since "the same visit cost more" and "a second visit
         // was needed" aren't distinguishable from the task alone.
         $alreadyExpensed = $task->expense_id !== null;
+
+        // Phase 7A follow-up: completing a task always needs operational
+        // resolve authority (just checked above), but actually recording a
+        // new, non-zero cost — the first one or an additional one — is
+        // maintenance.manage_costs' domain specifically. A zero-cost
+        // completion records no Expense at all (see recordExpenseFor()'s own
+        // guard below), so resolve alone is enough for that case; checked
+        // against the raw submitted value before validation runs, same
+        // pattern saveAssign() already uses for its own per-field gating.
+        $costBeingRecorded = $alreadyExpensed
+            ? (float) ($this->complete_additional_cost ?: 0) > 0
+            : (float) ($this->complete_actual_cost ?: 0) > 0;
+
+        if ($costBeingRecorded) {
+            $this->authorize('manage_costs', $task);
+        }
+
+        // The deposit-deduction checkbox only ever appears (and only ever
+        // acts) on first completion, never on a re-completion — see
+        // openCompleteForm()'s own reset of complete_deduct_from_deposit and
+        // the $alreadyExpensed branch below, which never reads it.
+        if (! $alreadyExpensed && $this->complete_deduct_from_deposit) {
+            $this->authorize('manage_liability', $task);
+        }
 
         $data = $this->validate($alreadyExpensed ? [
             'complete_additional_cost' => ['nullable', 'numeric', 'min:0'],
@@ -547,7 +623,11 @@ class Index extends Component
     public function openLiabilityDecision(int $taskId): void
     {
         $task = MaintenanceTask::with('complaint')->findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A follow-up: liability decisions are their own permission
+        // now, separate from operational resolve — a manager must never
+        // reach this via scheduling, assignment, cost-recording, or
+        // operational resolve authority alone.
+        $this->authorize('manage_liability', $task);
 
         $this->decidingTaskId = $taskId;
         $candidate = app(MaintenanceCostService::class)->candidateTenancyFor($task);
@@ -563,7 +643,8 @@ class Index extends Component
     public function confirmTenantLiability(): void
     {
         $task = MaintenanceTask::findOrFail($this->decidingTaskId);
-        $this->authorize('update', $task);
+        // Phase 7A follow-up: same reasoning as openLiabilityDecision() — manage_liability.
+        $this->authorize('manage_liability', $task);
 
         $this->validate([
             'liability_tenancy_id' => ['required', 'integer', 'exists:tenancies,id'],
@@ -587,7 +668,8 @@ class Index extends Component
     public function markLandlordResponsible(): void
     {
         $task = MaintenanceTask::findOrFail($this->decidingTaskId);
-        $this->authorize('update', $task);
+        // Phase 7A follow-up: same reasoning as openLiabilityDecision() — manage_liability.
+        $this->authorize('manage_liability', $task);
 
         $this->validate(['liability_reason' => ['required', 'string', 'max:1000']]);
 
@@ -608,7 +690,9 @@ class Index extends Component
     public function openDeductForm(int $taskId): void
     {
         $task = MaintenanceTask::findOrFail($taskId);
-        $this->authorize('update', $task);
+        // Phase 7A follow-up: initiating a deposit deduction is its own
+        // liability-management permission now.
+        $this->authorize('manage_liability', $task);
 
         $this->deductingTaskId = $taskId;
         $this->deductingTaskEvidence = null;
@@ -622,7 +706,8 @@ class Index extends Component
     public function confirmDeductFromDeposit(): void
     {
         $task = MaintenanceTask::with('complaint')->findOrFail($this->deductingTaskId);
-        $this->authorize('update', $task);
+        // Phase 7A follow-up: same reasoning as openDeductForm() — manage_liability.
+        $this->authorize('manage_liability', $task);
 
         $this->validate([
             'deductingTaskEvidence' => ['nullable', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png'],

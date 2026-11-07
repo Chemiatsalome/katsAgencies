@@ -6,6 +6,7 @@ use App\Livewire\Maintenance\Index as MaintenanceIndex;
 use App\Livewire\Maintenance\Schedules\Form as ScheduleForm;
 use App\Livewire\Maintenance\Schedules\Index as SchedulesIndex;
 use App\Models\Complaint;
+use App\Models\Manager;
 use App\Models\MaintenanceTask;
 use App\Models\Property;
 use App\Models\User;
@@ -17,6 +18,37 @@ use Tests\TestCase;
 class LandlordMaintenanceModuleTest extends TestCase
 {
     use RefreshDatabase;
+
+    private function makeManager(User $landlord, array $permissions, bool $allProperties = true): User
+    {
+        static $n = 0;
+        $n++;
+
+        $manager = Manager::create([
+            'landlord_id' => $landlord->id,
+            'name' => "Test Manager {$n}",
+            'phone' => '080000'.str_pad((string) $n, 4, '0', STR_PAD_LEFT),
+            'email' => "maintenance-test-manager-{$n}@example.test",
+            'all_properties' => $allProperties,
+            'status' => 'active',
+            'token' => Manager::generateToken(),
+            'expires_at' => now()->addDays(7),
+            'invited_at' => now(),
+            'activated_at' => now(),
+        ]);
+
+        $managerUser = User::create([
+            'name' => $manager->name,
+            'email' => $manager->email,
+            'password' => bcrypt('password'),
+            'status' => 'active',
+        ]);
+        $managerUser->assignRole('manager');
+        $managerUser->syncPermissions($permissions);
+        $manager->update(['user_id' => $managerUser->id]);
+
+        return $managerUser->fresh();
+    }
 
     public function test_landlord_can_log_a_maintenance_task_manually(): void
     {
@@ -236,6 +268,36 @@ class LandlordMaintenanceModuleTest extends TestCase
             ->assertExitCode(0);
     }
 
+    /**
+     * Phase 7A, F2: an appliance complaint must reach the landlord's
+     * Requests tab exactly like any pre-existing category, and every
+     * pre-existing category must keep working after the enum widening.
+     */
+    public function test_landlord_sees_an_appliance_complaint_alongside_existing_categories(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+
+        Complaint::create([
+            'property_id' => $property->id, 'category' => 'appliance', 'subject' => 'Fridge not cooling',
+            'description' => 'The fridge stopped cooling overnight.', 'priority' => 'medium', 'status' => 'submitted',
+        ]);
+        Complaint::create([
+            'property_id' => $property->id, 'category' => 'plumbing', 'subject' => 'Leaking tap',
+            'description' => 'Kitchen tap leaking.', 'priority' => 'medium', 'status' => 'submitted',
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'requests'])
+            ->assertSee('Fridge not cooling')
+            ->assertSee('Leaking tap');
+
+        $this->assertDatabaseHas('complaints', ['subject' => 'Fridge not cooling', 'category' => 'appliance']);
+        $this->assertDatabaseHas('complaints', ['subject' => 'Leaking tap', 'category' => 'plumbing']);
+    }
+
     public function test_a_landlord_cannot_convert_another_landlords_complaint(): void
     {
         $this->seed();
@@ -260,5 +322,115 @@ class LandlordMaintenanceModuleTest extends TestCase
             ->assertForbidden();
 
         $this->assertDatabaseMissing('maintenance_tasks', ['complaint_id' => $complaint->id]);
+    }
+
+    /**
+     * Phase 7A, F9: convertToTask() only ever checked ComplaintPolicy::update()
+     * (complaints.respond) — a manager granted that but not maintenance.create
+     * could still create MaintenanceTask rows through this one path, bypassing
+     * the permission the landlord specifically withheld.
+     */
+    public function test_a_manager_with_complaints_respond_and_maintenance_create_can_convert_a_complaint(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+        $managerUser = $this->makeManager($landlord, ['complaints.view', 'complaints.respond', 'maintenance.create']);
+
+        $complaint = Complaint::create([
+            'property_id' => $property->id, 'category' => 'plumbing', 'subject' => 'Leaking tap',
+            'description' => 'Kitchen tap leaking.', 'priority' => 'medium', 'status' => 'submitted',
+        ]);
+
+        Livewire::actingAs($managerUser)
+            ->test(MaintenanceIndex::class, ['tab' => 'requests'])
+            ->call('convertToTask', $complaint->id)
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('maintenance_tasks', ['complaint_id' => $complaint->id]);
+        $this->assertEquals('assigned', $complaint->fresh()->status);
+    }
+
+    public function test_a_manager_with_complaints_respond_but_without_maintenance_create_cannot_convert_a_complaint(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+        $managerUser = $this->makeManager($landlord, ['complaints.view', 'complaints.respond']);
+
+        $complaint = Complaint::create([
+            'property_id' => $property->id, 'category' => 'plumbing', 'subject' => 'Leaking tap',
+            'description' => 'Kitchen tap leaking.', 'priority' => 'medium', 'status' => 'submitted',
+        ]);
+
+        Livewire::actingAs($managerUser)
+            ->test(MaintenanceIndex::class, ['tab' => 'requests'])
+            ->call('convertToTask', $complaint->id)
+            ->assertForbidden();
+
+        // Unauthorized attempts must not create a task or partially modify the complaint.
+        $this->assertDatabaseMissing('maintenance_tasks', ['complaint_id' => $complaint->id]);
+        $this->assertEquals('submitted', $complaint->fresh()->status);
+    }
+
+    public function test_a_manager_without_access_to_the_property_cannot_convert_its_complaint_even_with_both_permissions(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+        // Scoped to no properties at all (all_properties: false, nothing attached).
+        $managerUser = $this->makeManager($landlord, ['complaints.view', 'complaints.respond', 'maintenance.create'], allProperties: false);
+
+        $complaint = Complaint::create([
+            'property_id' => $property->id, 'category' => 'plumbing', 'subject' => 'Leaking tap',
+            'description' => 'Kitchen tap leaking.', 'priority' => 'medium', 'status' => 'submitted',
+        ]);
+
+        Livewire::actingAs($managerUser)
+            ->test(MaintenanceIndex::class, ['tab' => 'requests'])
+            ->call('convertToTask', $complaint->id)
+            ->assertForbidden();
+
+        $this->assertDatabaseMissing('maintenance_tasks', ['complaint_id' => $complaint->id]);
+        $this->assertEquals('submitted', $complaint->fresh()->status);
+    }
+
+    /**
+     * Phase 7A follow-up, finding 2: the "Deduct from Deposit" modal read
+     * $deductingTask->complaint->tenant_confirmed_at with no null-safe
+     * operator — for a landlord-created task with no linked complaint
+     * (complaint_id null, which MaintenanceCostService explicitly permits
+     * deducting from), opening the modal threw "Attempt to read property
+     * tenant_confirmed_at on null" instead of rendering.
+     */
+    public function test_opening_the_deduct_form_does_not_throw_for_a_landlord_created_task_with_no_linked_complaint(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+
+        $task = MaintenanceTask::create([
+            'property_id' => $property->id,
+            'title' => 'Repaint corridor',
+            'category' => 'painting',
+            'priority' => 'low',
+            'status' => 'completed',
+            'actual_cost' => 3500,
+            'completed_at' => now(),
+        ]);
+
+        $this->assertNull($task->complaint_id);
+
+        $html = Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
+            ->call('openDeductForm', $task->id)
+            ->assertHasNoErrors()
+            ->html();
+
+        $this->assertStringContainsString('logged directly, with no linked tenant complaint', $html);
     }
 }

@@ -71,7 +71,16 @@ class DocumentPolicy
             // arbitrary tenancy row a bare first() happens to return.
             $subject instanceof Tenant => Tenant::accessibleBy($user)->whereKey($subject->id)->exists(),
             $subject instanceof MaintenanceTask => MaintenanceTask::accessibleBy($user)->whereKey($subject->id)->exists(),
-            $subject instanceof Complaint => Complaint::accessibleBy($user)->whereKey($subject->id)->exists(),
+            // Phase 7A, F3: Complaint::accessibleBy() is landlord/manager-only
+            // (chains through House/Property, same shape as Tenancy's own
+            // accessibleBy()) — it never granted the tenant who filed the
+            // complaint, and attached their own evidence photo to it, access
+            // to that file back. Same tenant-ownership fallback already
+            // applied to Tenancy/Payment/DepositPayment/DepositDeduction/
+            // TenancyNotice/TenancyChangeRequest above; ComplaintPolicy::view()
+            // already has the equivalent check, this was just missing here.
+            $subject instanceof Complaint => Complaint::accessibleBy($user)->whereKey($subject->id)->exists()
+                || $subject->tenant_id === $user->tenant?->id,
             // Payment evidence (e.g. a tenant's offline-payment proof) —
             // scoped via its tenancy, same as every other tenancy-rooted
             // subject above; Payment has no accessibleBy() of its own.

@@ -15,10 +15,17 @@ class MaintenanceCostService
     /**
      * Record a maintenance task's actual cost as a property expense — idempotent,
      * so marking a task "completed" twice never creates a duplicate expense.
+     *
+     * Phase 7A follow-up: `actual_cost` is cast `decimal:2`, so a literal
+     * zero reads back as the string "0.00" — PHP's `!` only treats `""`/`"0"`
+     * as falsy, not `"0.00"`, so the old `! $task->actual_cost` guard let a
+     * genuinely zero-cost completion through and created a zero-amount
+     * Expense row. An explicit numeric comparison is decimal-cast-safe
+     * regardless of what string representation the cast produces.
      */
     public function recordExpenseFor(MaintenanceTask $task): ?Expense
     {
-        if ($task->expense_id || ! $task->actual_cost) {
+        if ($task->expense_id || (float) $task->actual_cost <= 0) {
             return $task->expense;
         }
 

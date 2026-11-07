@@ -66,7 +66,15 @@ class PermissionSeeder extends Seeder
             // manager who already had 'terminate', so nobody's real-world
             // access regresses from this split.
             'Tenancies' => ['tenancies.view', 'tenancies.create', 'tenancies.terminate', 'tenancies.manage_contracts'],
-            'Maintenance' => ['maintenance.view', 'maintenance.create', 'maintenance.schedule', 'maintenance.assign', 'maintenance.resolve'],
+            // Phase 7A follow-up: 'resolve' used to also gate cost recording
+            // and liability/deposit-deduction decisions — a manager granted
+            // only operational resolve authority could still record expenses
+            // or trigger a deposit deduction. Split into two further,
+            // independently-grantable permissions; 'resolve' itself now
+            // covers operational progress and completion only. Not granted
+            // to any existing manager automatically — see Managers\Form,
+            // which only ever writes what a landlord explicitly checks.
+            'Maintenance' => ['maintenance.view', 'maintenance.create', 'maintenance.schedule', 'maintenance.assign', 'maintenance.resolve', 'maintenance.manage_costs', 'maintenance.manage_liability'],
             // 'resolve' is deliberately not a separate permission here —
             // resolving a complaint IS completing its linked maintenance
             // task (Maintenance\Index::complete()), which is already gated
@@ -100,7 +108,9 @@ class PermissionSeeder extends Seeder
             'maintenance.create' => 'Log maintenance requests',
             'maintenance.schedule' => 'Schedule maintenance',
             'maintenance.assign' => 'Assign vendors',
-            'maintenance.resolve' => 'Mark maintenance resolved',
+            'maintenance.resolve' => 'Mark maintenance resolved (operational progress and completion)',
+            'maintenance.manage_costs' => 'Record maintenance costs and expenses',
+            'maintenance.manage_liability' => 'Decide tenant/landlord liability and initiate deposit deductions',
             'complaints.view' => 'View complaints',
             'complaints.respond' => 'Respond to complaints',
             'applications.view' => 'View applications',

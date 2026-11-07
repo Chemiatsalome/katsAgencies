@@ -186,6 +186,111 @@ class LandlordDocumentsModuleTest extends TestCase
             ->assertSee('leak.jpg');
     }
 
+    /**
+     * Phase 7A, F3: Complaint had a landlord/manager-only accessibleBy()
+     * case in DocumentPolicy with no tenant-ownership fallback — the tenant
+     * who filed the complaint and attached their own evidence photo to it
+     * couldn't view it back. Mirrors depositDeductionWithEvidence()/
+     * tenancyNoticeWithEvidence() above.
+     */
+    private function complaintWithEvidence(Tenancy $tenancy, int $uploadedBy): Document
+    {
+        $complaint = Complaint::create([
+            'tenant_id' => $tenancy->tenant_id,
+            'house_id' => $tenancy->house_id,
+            'property_id' => $tenancy->house->block->property_id,
+            'tenancy_id' => $tenancy->id,
+            'category' => 'plumbing',
+            'subject' => 'Leaking tap',
+            'description' => 'Kitchen tap leaking.',
+            'priority' => 'medium',
+            'status' => 'submitted',
+        ]);
+
+        return Document::create([
+            'documentable_type' => $complaint->getMorphClass(),
+            'documentable_id' => $complaint->id,
+            'category' => 'other',
+            'original_filename' => 'leak.jpg',
+            'path' => UploadedFile::fake()->create('leak.jpg', 100)->store('documents', 'local'),
+            'mime_type' => 'image/jpeg',
+            'size' => 100,
+            'uploaded_by' => $uploadedBy,
+        ]);
+    }
+
+    public function test_tenant_can_download_their_own_complaint_attachment_but_not_another_tenants(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $tenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $tenancy->tenant, $tenancy->tenant->name, 'complaint-evidence-tenant@example.test', 'password'
+        );
+
+        $document = $this->complaintWithEvidence($tenancy, $tenantUser->id);
+
+        $this->actingAs($tenantUser)->get(route('documents.show', $document))->assertOk();
+
+        $otherTenant = Tenant::create(['name' => 'Someone Else', 'phone' => '0700000995', 'payment_due_day' => 1]);
+        $otherTenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $otherTenant, $otherTenant->name, 'other-complaint-tenant@example.test', 'password'
+        );
+        $this->actingAs($otherTenantUser)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_landlord_can_view_a_complaint_attachment_for_their_own_property_but_not_another_landlords(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->complaintWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($landlord)->get(route('documents.show', $document))->assertOk();
+
+        $otherLandlord = User::factory()->create(['status' => 'active']);
+        $otherLandlord->assignRole('landlord');
+        $this->actingAs($otherLandlord)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    /** Requirement: a manager must remain restricted to properties they are authorized to manage. */
+    public function test_a_manager_without_access_to_the_property_cannot_view_a_complaint_attachment(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->complaintWithEvidence($tenancy, $landlord->id);
+
+        $restrictedManagerUser = User::factory()->create(['status' => 'active']);
+        $restrictedManagerUser->assignRole('manager');
+        $restrictedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $restrictedManagerUser->id, 'name' => $restrictedManagerUser->name,
+            'phone' => '0700000229', 'email' => $restrictedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $otherProperty = Property::create(['landlord_id' => $landlord->id, 'name' => 'Unrelated Property Complaint', 'type' => 'apartment', 'status' => 'active']);
+        $restrictedManager->properties()->attach($otherProperty->id);
+
+        $this->actingAs($restrictedManagerUser)->get(route('documents.show', $document))->assertForbidden();
+
+        $authorizedManagerUser = User::factory()->create(['status' => 'active']);
+        $authorizedManagerUser->assignRole('manager');
+        $authorizedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $authorizedManagerUser->id, 'name' => $authorizedManagerUser->name,
+            'phone' => '0700000230', 'email' => $authorizedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $authorizedManager->properties()->attach($tenancy->house->block->property_id);
+
+        $this->actingAs($authorizedManagerUser)->get(route('documents.show', $document))->assertOk();
+    }
+
     public function test_a_manager_does_not_see_upload_or_delete_controls_they_cannot_use(): void
     {
         Storage::fake('local');
