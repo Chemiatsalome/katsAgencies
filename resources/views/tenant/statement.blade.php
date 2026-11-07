@@ -51,7 +51,7 @@
     <h2>Payment History</h2>
     <table>
         <thead>
-            <tr><th>Date</th><th>Method</th><th>Reference</th><th class="right">Amount</th></tr>
+            <tr><th>Date</th><th>Method</th><th>Reference</th><th class="right">Amount</th><th>Status</th></tr>
         </thead>
         <tbody>
             @forelse ($payments as $payment)
@@ -60,9 +60,24 @@
                     <td>{{ $payment->isOpeningBalance() ? 'Historical balance (not a transaction)' : ucfirst($payment->method) }}</td>
                     <td>{{ $payment->reference_number ?? '—' }}</td>
                     <td class="right">KSh {{ number_format($payment->amount, 2) }}</td>
+                    {{-- Phase 5b (P5-H-02): previously every row read as a plain,
+                         settled transaction regardless of status — sitting right
+                         next to the Outstanding Balance above, which (correctly)
+                         excludes anything not yet confirmed. Without this column
+                         the two figures could silently disagree with no
+                         explanation anywhere in the document. --}}
+                    <td>
+                        @if ($payment->isDisputed())
+                            Disputed{{ $payment->dispute_reason ? ' — '.$payment->dispute_reason : '' }}
+                        @elseif ($payment->needsLandlordConfirmation())
+                            Awaiting landlord confirmation
+                        @else
+                            Confirmed
+                        @endif
+                    </td>
                 </tr>
             @empty
-                <tr><td colspan="4">No payments recorded.</td></tr>
+                <tr><td colspan="5">No payments recorded.</td></tr>
             @endforelse
         </tbody>
     </table>

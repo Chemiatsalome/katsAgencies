@@ -33,7 +33,21 @@
                                                 —
                                             @endif
                                         </td>
-                                        <td class="px-5 py-3"><x-status-badge status="paid" /></td>
+                                        <td class="px-5 py-3">
+                                            <x-status-badge :status="$payment->status" />
+                                            {{-- Phase 5b (P5-H-01): the same confirmation/dispute detail already
+                                                 shown inline on My Rent (rent.blade.php) and My Deposit — a bare
+                                                 "Disputed" badge with no reason, or "Awaiting Landlord
+                                                 Confirmation" with no indication anything is actually happening,
+                                                 left a tenant with no way to act on either state from this page. --}}
+                                            @if ($payment->isDisputed())
+                                                <p class="text-xs text-danger mt-1 max-w-xs">{{ $payment->dispute_reason ? "\"{$payment->dispute_reason}\"" : 'Your landlord has disputed this payment.' }}</p>
+                                            @elseif ($payment->needsLandlordConfirmation())
+                                                <p class="text-xs text-brand-slate mt-1">Awaiting your landlord's confirmation.</p>
+                                            @elseif ($payment->confirmed_at)
+                                                <p class="text-xs text-brand-slate mt-1">Confirmed {{ $payment->confirmed_at->format('d M Y') }}</p>
+                                            @endif
+                                        </td>
                                     </tr>
                                 @empty
                                     <tr>
