@@ -4,11 +4,14 @@ namespace App\Livewire\Tenant;
 
 use App\Models\Document;
 use App\Models\MpesaTransaction;
+use App\Models\Tenancy;
 use App\Services\DepositService;
+use App\Services\MpesaInvestigationService;
 use App\Services\MpesaService;
 use App\Services\NotificationService;
 use App\Services\PaymentGatewayService;
 use Illuminate\Support\Facades\Auth;
+use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -62,6 +65,19 @@ class PayDeposit extends Component
         $outstanding = $tenancy?->depositOutstanding() ?? 0.0;
 
         $this->amount = $outstanding > 0 ? number_format($outstanding, 2, '.', '') : '';
+
+        // Phase 4 audit, Finding 4: restore a reload-lost in-flight attempt
+        // — see PayRent::mount()'s identical fix for the full reasoning.
+        $unresolved = $tenancy ? $this->unresolvedTransactionsQuery($tenancy)->get() : collect();
+
+        if ($unresolved->count() === 1) {
+            $this->pendingTransactionId = $unresolved->first()->id;
+        }
+    }
+
+    private function unresolvedTransactionsQuery(Tenancy $tenancy)
+    {
+        return MpesaTransaction::where('tenancy_id', $tenancy->id)->where('purpose', 'deposit')->unresolved();
     }
 
     public function pay(): void
@@ -74,6 +90,14 @@ class PayDeposit extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        // Phase 4 audit, Finding 4: hard block — see PayRent::pay()'s
+        // identical check for the full reasoning.
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            $this->addError('phone', 'You already have a deposit payment attempt that hasn\'t resolved yet. Please wait for it, or ask for help below, before trying again.');
+
+            return;
+        }
 
         try {
             $landlordId = $tenancy->house->block->property->landlord_id;
@@ -139,6 +163,7 @@ class PayDeposit extends Component
         return MpesaTransaction::where('tenancy_id', $tenancy->id)->find($this->pendingTransactionId);
     }
 
+    /** No longer writes a terminal 'timeout' — see PayRent::checkStatus()'s identical fix for the full reasoning. */
     public function checkStatus(): void
     {
         if (! $this->pendingTransactionId) {
@@ -152,12 +177,6 @@ class PayDeposit extends Component
             // this tenant's tenancy — both are treated identically: clear
             // it and never touch whatever that id actually points to.
             $this->pendingTransactionId = null;
-
-            return;
-        }
-
-        if ($transaction->status === 'pending' && $transaction->created_at->lt(now()->subMinutes(3))) {
-            $transaction->update(['status' => 'timeout']);
         }
     }
 
@@ -167,10 +186,42 @@ class PayDeposit extends Component
         $this->resetErrorBag();
     }
 
+    /** See PayRent::requestCancellation()'s identical fix for the full reasoning. */
+    public function requestCancellation(int $transactionId): void
+    {
+        $tenant = Auth::user()->tenant;
+        $tenancy = $tenant?->currentTenancy();
+        abort_if(! $tenancy, 404);
+
+        $transaction = $this->unresolvedTransactionsQuery($tenancy)->find($transactionId);
+
+        if (! $transaction) {
+            return;
+        }
+
+        if ($transaction->created_at->gt(now()->subMinutes(10))) {
+            $this->addError('phone', 'This attempt may still complete — please wait a little longer before requesting help.');
+
+            return;
+        }
+
+        try {
+            app(MpesaInvestigationService::class)->requestCancellation($transaction, Auth::user());
+            session()->flash('status', 'We\'ve been notified and are looking into this — we\'ll update you once it\'s resolved.');
+        } catch (InvalidArgumentException $e) {
+            $this->addError('phone', $e->getMessage());
+        }
+    }
+
     public function openOfflineForm(): void
     {
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
+        abort_if(! $tenancy, 404);
+
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            return;
+        }
 
         $this->offline_method = 'bank';
         $this->offline_amount = $tenancy ? number_format($tenancy->depositOutstanding(), 2, '.', '') : '';
@@ -207,6 +258,12 @@ class PayDeposit extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            $this->addError('offline_amount', 'You already have a deposit payment attempt that hasn\'t resolved yet. Please wait for it, or ask for help, before submitting another.');
+
+            return;
+        }
 
         $methodLabel = match ($data['offline_method']) {
             'bank' => 'bank transfer', 'cash' => 'cash', 'till' => "landlord's till",
@@ -259,11 +316,13 @@ class PayDeposit extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         $transaction = $this->ownPendingTransaction();
+        $unresolvedTransactions = $tenancy ? $this->unresolvedTransactionsQuery($tenancy)->oldest()->get() : collect();
 
         $landlordId = $tenancy?->house?->block?->property?->landlord_id;
 
         return view('livewire.tenant.pay-deposit', [
             'transaction' => $transaction,
+            'unresolvedTransactions' => $unresolvedTransactions,
             'outstanding' => $tenancy?->depositOutstanding() ?? 0,
             'mpesaAvailable' => $landlordId ? (bool) app(PaymentGatewayService::class)->collectionModeFor($landlordId) : false,
         ]);

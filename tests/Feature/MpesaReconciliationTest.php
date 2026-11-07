@@ -92,6 +92,8 @@ class MpesaReconciliationTest extends TestCase
         Http::fake([
             '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
             '*/mpesa/stkpushquery/v1/query' => Http::response([
+                'ResponseCode' => '0',
+                'CheckoutRequestID' => 'checkout-reconcile-failed-1',
                 'ResultCode' => 1,
                 'ResultDesc' => 'The balance on the customer\'s account is insufficient.',
             ]),
@@ -129,6 +131,8 @@ class MpesaReconciliationTest extends TestCase
         Http::fake([
             '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
             '*/mpesa/stkpushquery/v1/query' => Http::response([
+                'ResponseCode' => '0',
+                'CheckoutRequestID' => 'checkout-reconcile-missed-1',
                 'ResultCode' => 0,
                 'ResultDesc' => 'The service request is processed successfully.',
             ]),
@@ -171,11 +175,20 @@ class MpesaReconciliationTest extends TestCase
         );
     }
 
-    public function test_reconciliation_times_out_a_transaction_safaricom_has_no_answer_for_after_ten_minutes(): void
+    /**
+     * Phase 4 audit, Finding 4: a transaction Safaricom has no answer for at
+     * all, even after 10+ minutes, is no longer written off as 'timeout' —
+     * that used to make MpesaCallbackController::processResult() treat it
+     * as already-finished and silently discard a genuinely late callback.
+     * It now stays 'pending' (still eligible for that late callback, or a
+     * later query) and is escalated for manual verification instead —
+     * tracked entirely through investigation_outcome, not status.
+     */
+    public function test_reconciliation_escalates_a_transaction_safaricom_has_no_answer_for_after_ten_minutes(): void
     {
         $this->configureMpesa();
         $this->seed();
-        $tenancy = Tenancy::active()->firstOrFail();
+        $tenancy = Tenancy::active()->with('tenant', 'house.block.property')->firstOrFail();
 
         Http::fake([
             '*/oauth/v1/generate*' => Http::response(['access_token' => 'fake-token', 'expires_in' => 3599]),
@@ -194,7 +207,18 @@ class MpesaReconciliationTest extends TestCase
 
         $this->artisan('mpesa:reconcile-pending')->assertExitCode(0);
 
-        $this->assertEquals('timeout', $transaction->fresh()->status);
+        $transaction->refresh();
+        $this->assertEquals('pending', $transaction->status, 'Must stay unresolved, not a terminal status.');
+        $this->assertEquals(\App\Models\MpesaTransaction::OUTCOME_ESCALATED, $transaction->investigation_outcome);
+        $this->assertNotNull($transaction->investigated_at);
+        $this->assertNull($transaction->investigated_by, 'Automated reconciliation escalates with no admin attached.');
+
+        $this->assertTrue(
+            AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+                ->where('notifiable_id', $tenancy->tenant->id)
+                ->where('event_type', 'mpesa_payment_needs_verification')
+                ->exists()
+        );
     }
 
     public function test_reconciliation_leaves_a_recently_stuck_transaction_alone_when_safaricom_has_no_answer_yet(): void

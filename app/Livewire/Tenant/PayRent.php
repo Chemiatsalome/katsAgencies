@@ -6,11 +6,13 @@ use App\Models\Document;
 use App\Models\MpesaTransaction;
 use App\Models\Payment;
 use App\Models\Tenancy;
+use App\Services\MpesaInvestigationService;
 use App\Services\MpesaService;
 use App\Services\NotificationService;
 use App\Services\PaymentAllocationService;
 use App\Services\PaymentGatewayService;
 use Illuminate\Support\Facades\Auth;
+use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -68,6 +70,25 @@ class PayRent extends Component
         // one month is outstanding, "full" and "month" are the same amount anyway.
         $this->paymentOption = $fullBalance > 0 ? 'full' : 'custom';
         $this->amount = $fullBalance > 0 ? number_format($fullBalance, 2, '.', '') : ($monthAmount > 0 ? number_format($monthAmount, 2, '.', '') : '');
+
+        // Phase 4 audit, Finding 4: a page reload used to lose track of an
+        // in-flight STK push entirely (pendingTransactionId only ever lived
+        // in Livewire's own component state). Restoring it here means a
+        // tenant who closed the tab mid-payment sees it again on return,
+        // rather than being free to start a second, unrelated attempt.
+        // Only restorable when exactly one unresolved transaction exists —
+        // see unresolvedTransactions() in render() for the (should-be-rare)
+        // multiple case.
+        $unresolved = $tenancy ? $this->unresolvedTransactionsQuery($tenancy)->get() : collect();
+
+        if ($unresolved->count() === 1) {
+            $this->pendingTransactionId = $unresolved->first()->id;
+        }
+    }
+
+    private function unresolvedTransactionsQuery(Tenancy $tenancy)
+    {
+        return MpesaTransaction::where('tenancy_id', $tenancy->id)->where('purpose', 'rent')->unresolved();
     }
 
     public function updatedPaymentOption(): void
@@ -103,6 +124,17 @@ class PayRent extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        // Phase 4 audit, Finding 4: a hard block, not an override-able
+        // warning — while any attempt for this tenancy+purpose is still
+        // unresolved (pending, or a legacy 'timeout' row), nothing may start
+        // a second one. Re-checked server-side even though the view also
+        // hides the form, since the view is never enforcement on its own.
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            $this->addError('phone', 'You already have a rent payment attempt that hasn\'t resolved yet. Please wait for it, or ask for help below, before trying again.');
+
+            return;
+        }
 
         try {
             $landlordId = $tenancy->house->block->property->landlord_id;
@@ -178,6 +210,15 @@ class PayRent extends Component
         return MpesaTransaction::where('tenancy_id', $tenancy->id)->find($this->pendingTransactionId);
     }
 
+    /**
+     * Phase 4 audit, Finding 4: no longer writes a terminal 'timeout' —
+     * giving up locally used to make MpesaCallbackController::processResult()
+     * treat the transaction as already-finished and silently discard a
+     * genuinely late callback. This is now a pure read: it just re-scopes
+     * the lookup (Finding 1's protection) and clears a dangling/foreign id;
+     * whatever happens to the transaction itself is decided server-side by
+     * a real callback, a reconciliation query, or an admin's resolution.
+     */
     public function checkStatus(): void
     {
         if (! $this->pendingTransactionId) {
@@ -191,14 +232,6 @@ class PayRent extends Component
             // this tenant's tenancy — both are treated identically: clear
             // it and never touch whatever that id actually points to.
             $this->pendingTransactionId = null;
-
-            return;
-        }
-
-        // STK pushes that never get a callback (phone unreachable, app killed, etc.)
-        // shouldn't poll forever — give the tenant a clear timeout instead.
-        if ($transaction->status === 'pending' && $transaction->created_at->lt(now()->subMinutes(3))) {
-            $transaction->update(['status' => 'timeout']);
         }
     }
 
@@ -208,10 +241,53 @@ class PayRent extends Component
         $this->resetErrorBag();
     }
 
+    /**
+     * A tenant asking us to look into a stuck attempt — not a real
+     * Safaricom cancellation (no such API exists), a request that triggers
+     * an immediate status query and flags it for the admin team. Only
+     * reachable once the attempt has been unresolved long enough that
+     * asking is reasonable; MpesaInvestigationService enforces the rest
+     * (not already resolved, not already requested) independently of this
+     * check.
+     */
+    public function requestCancellation(int $transactionId): void
+    {
+        $tenant = Auth::user()->tenant;
+        $tenancy = $tenant?->currentTenancy();
+        abort_if(! $tenancy, 404);
+
+        $transaction = $this->unresolvedTransactionsQuery($tenancy)->find($transactionId);
+
+        if (! $transaction) {
+            return;
+        }
+
+        if ($transaction->created_at->gt(now()->subMinutes(10))) {
+            $this->addError('phone', 'This attempt may still complete — please wait a little longer before requesting help.');
+
+            return;
+        }
+
+        try {
+            app(MpesaInvestigationService::class)->requestCancellation($transaction, Auth::user());
+            session()->flash('status', 'We\'ve been notified and are looking into this — we\'ll update you once it\'s resolved.');
+        } catch (InvalidArgumentException $e) {
+            $this->addError('phone', $e->getMessage());
+        }
+    }
+
     public function openOfflineForm(): void
     {
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
+        abort_if(! $tenancy, 404);
+
+        // Phase 4 audit, Finding 4: an offline claim is just as much a
+        // payment attempt as an STK push — it must not be usable to bypass
+        // the same hard retry block.
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            return;
+        }
 
         $this->offline_method = 'bank';
         $this->offline_amount = $tenancy ? number_format($tenancy->balance(), 2, '.', '') : '';
@@ -247,6 +323,15 @@ class PayRent extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        // Re-checked here too — never trust that the form could only have
+        // been opened while clear (openOfflineForm() already guards this,
+        // but the view toggle alone is never enforcement on its own).
+        if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
+            $this->addError('offline_amount', 'You already have a rent payment attempt that hasn\'t resolved yet. Please wait for it, or ask for help, before submitting another.');
+
+            return;
+        }
 
         $methodLabel = match ($data['offline_method']) {
             'bank' => 'bank transfer', 'cash' => 'cash', 'till' => "landlord's till",
@@ -305,10 +390,18 @@ class PayRent extends Component
         $tenancy = $tenant?->currentTenancy();
         $transaction = $this->ownPendingTransaction();
 
+        // Almost always 0 or 1 — the hard retry block in pay()/
+        // submitOfflinePayment() prevents a second unresolved attempt going
+        // forward. More than one can only exist from data predating this
+        // fix; the view falls back to a plain list in that case rather than
+        // arbitrarily picking one to show.
+        $unresolvedTransactions = $tenancy ? $this->unresolvedTransactionsQuery($tenancy)->oldest()->get() : collect();
+
         $landlordId = $tenancy?->house?->block?->property?->landlord_id;
 
         return view('livewire.tenant.pay-rent', [
             'transaction' => $transaction,
+            'unresolvedTransactions' => $unresolvedTransactions,
             'fullBalance' => $tenancy?->balance() ?? 0,
             'monthAmount' => $this->monthAmount($tenancy),
             // Shown separately from the rent balance above — paying rent in

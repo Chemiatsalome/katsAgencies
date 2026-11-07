@@ -7,7 +7,34 @@
             <div class="max-w-md mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
 
-                    @if (! $transaction)
+                    @if ($unresolvedTransactions->count() > 1)
+                        {{-- Can only happen from data predating the Finding 4 fix — pay()/
+                             submitOfflinePayment() now hard-block a second unresolved attempt. --}}
+                        <div class="space-y-3">
+                            <p class="text-sm font-medium text-charcoal">You have {{ $unresolvedTransactions->count() }} rent payment attempts that haven't resolved yet.</p>
+                            @foreach ($unresolvedTransactions as $u)
+                                <div class="rounded-md border border-brand-border p-3 text-sm space-y-1">
+                                    <div class="flex items-center justify-between">
+                                        <span class="font-medium text-charcoal">KSh {{ number_format($u->amount, 2) }}</span>
+                                        <span class="text-xs text-brand-slate">{{ $u->created_at->format('d M Y H:i') }}</span>
+                                    </div>
+                                    @if ($u->cancellationRequested())
+                                        <p class="text-xs text-brand-slate">We've been notified and are looking into this.</p>
+                                    @elseif ($u->needsManualVerification())
+                                        <p class="text-xs text-warning">Needs verification — please don't pay again for this one.</p>
+                                    @elseif ($u->created_at->lt(now()->subMinutes(10)))
+                                        <button wire:click="requestCancellation({{ $u->id }})" class="text-xs text-teal hover:underline">Ask us to look into this</button>
+                                    @else
+                                        <p class="text-xs text-brand-slate">Still waiting to hear back…</p>
+                                    @endif
+                                </div>
+                            @endforeach
+                            @if (session('status'))
+                                <div class="rounded-md bg-teal/10 border border-teal/30 text-teal px-4 py-2 text-sm">{{ session('status') }}</div>
+                            @endif
+                            <x-input-error :messages="$errors->get('phone')" class="mt-1" />
+                        </div>
+                    @elseif (! $transaction)
                         @if ($fullBalance <= 0 && $monthAmount <= 0)
                             <div class="rounded-md bg-teal/10 border border-teal/30 text-charcoal text-sm px-4 py-3">
                                 Your rent is paid up, nothing currently due. You can still make an advance payment below if you'd like.
@@ -140,11 +167,32 @@
                                 </div>
                             </form>
                         @endif
-                    @elseif ($transaction->status === 'pending')
+                    @elseif (in_array($transaction->status, ['pending', 'timeout']))
+                        {{-- 'timeout' here is only ever a legacy row from before this fix
+                             (see MpesaTransaction::isFinished()'s docblock) — treated exactly
+                             like 'pending', never as a dead end. --}}
                         <div wire:poll.3s="checkStatus" class="text-center space-y-3 py-4">
-                            <div class="mx-auto h-10 w-10 border-4 border-teal border-t-transparent rounded-full animate-spin"></div>
-                            <p class="text-sm font-medium text-charcoal">Check your phone</p>
-                            <p class="text-sm text-brand-slate">Enter your M-Pesa PIN to complete the payment of KSh {{ number_format($transaction->amount, 2) }}.</p>
+                            @if ($transaction->cancellationRequested())
+                                <div class="mx-auto h-10 w-10 rounded-full bg-navy-light text-navy flex items-center justify-center"><x-nav-icon name="warning" class="h-5 w-5" /></div>
+                                <p class="text-sm font-medium text-charcoal">We're looking into this</p>
+                                <p class="text-sm text-brand-slate">You asked us to check on this KSh {{ number_format($transaction->amount, 2) }} payment — we'll update you once it's resolved.</p>
+                            @elseif ($transaction->needsManualVerification())
+                                <div class="mx-auto h-10 w-10 rounded-full bg-warning/10 text-warning flex items-center justify-center"><x-nav-icon name="warning" class="h-5 w-5" /></div>
+                                <p class="text-sm font-medium text-charcoal">Needs verification</p>
+                                <p class="text-sm text-brand-slate">We're confirming this KSh {{ number_format($transaction->amount, 2) }} payment with your landlord — please don't pay again until it's resolved.</p>
+                            @else
+                                <div class="mx-auto h-10 w-10 border-4 border-teal border-t-transparent rounded-full animate-spin"></div>
+                                <p class="text-sm font-medium text-charcoal">Check your phone</p>
+                                <p class="text-sm text-brand-slate">Enter your M-Pesa PIN to complete the payment of KSh {{ number_format($transaction->amount, 2) }}.</p>
+                                @if ($transaction->created_at->lt(now()->subMinutes(10)))
+                                    <p class="text-xs text-brand-slate">Taking longer than usual?</p>
+                                    <button wire:click="requestCancellation({{ $transaction->id }})" class="text-sm text-teal hover:underline">Ask us to look into this</button>
+                                @endif
+                            @endif
+                            @if (session('status'))
+                                <div class="rounded-md bg-teal/10 border border-teal/30 text-teal px-4 py-2 text-sm">{{ session('status') }}</div>
+                            @endif
+                            <x-input-error :messages="$errors->get('phone')" class="mt-1" />
                         </div>
                     @elseif ($transaction->status === 'success')
                         <div class="text-center space-y-3 py-4">
@@ -176,8 +224,6 @@
                             <p class="text-sm font-medium text-charcoal">
                                 @if ($transaction->status === 'cancelled')
                                     Payment cancelled
-                                @elseif ($transaction->status === 'timeout')
-                                    We didn't hear back in time
                                 @else
                                     Payment failed
                                 @endif

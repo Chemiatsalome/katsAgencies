@@ -2,14 +2,11 @@
 
 namespace App\Console\Commands;
 
-use App\Http\Controllers\MpesaCallbackController;
 use App\Models\MpesaTransaction;
-use App\Services\NotificationService;
-use App\Services\PaymentGatewayService;
+use App\Services\MpesaInvestigationService;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Closes the one real reconciliation gap in the whole M-Pesa flow: a
@@ -18,125 +15,61 @@ use Illuminate\Support\Facades\Log;
  * the client-side 3-minute timeout in PayRent/PayDeposit::checkStatus()
  * only gives up locally, it never actually finds out what happened. This
  * asks Safaricom directly via the STK status query API.
+ *
+ * Phase 4 audit, Finding 4: no longer writes a terminal 'timeout' status —
+ * a transaction that gets no answer within the first 2 minutes, nor any
+ * definitive one by 10, is escalated for manual verification instead
+ * (status stays 'pending', see MpesaTransaction::isFinished()'s docblock).
+ * It may still resolve later from a genuinely late callback, a later query,
+ * or an admin's own investigation. The actual query/interpret/apply logic
+ * now lives in MpesaInvestigationService::queryAndInterpret(), shared with
+ * the admin "re-query" action and a tenant's cancellation request.
  */
 #[Signature('mpesa:reconcile-pending')]
-#[Description('Query Safaricom for any M-Pesa transaction that\'s been pending for a while with no callback received, and resolve or time it out.')]
+#[Description('Query Safaricom for any M-Pesa transaction that\'s been pending for a while with no callback received, and resolve or escalate it.')]
 class ReconcileStuckMpesaTransactions extends Command
 {
-    public function handle(PaymentGatewayService $gateway, MpesaCallbackController $callbackController): int
+    public function handle(MpesaInvestigationService $investigation): int
     {
-        $stuck = MpesaTransaction::where('status', 'pending')
+        $stuck = MpesaTransaction::unresolved()
             ->whereNotNull('checkout_request_id')
             ->where('created_at', '<=', now()->subMinutes(2))
             ->get();
 
         $resolved = 0;
-        $timedOut = 0;
-        $needsReview = 0;
+        $escalated = 0;
 
         foreach ($stuck as $transaction) {
-            $result = $gateway->queryStkStatus($transaction);
+            $query = $investigation->queryAndInterpret($transaction, 'reconciliation');
 
-            if ($result !== null && array_key_exists('ResultCode', $result)) {
-                $resultCode = (int) $result['ResultCode'];
-                $resultDesc = $result['ResultDesc'] ?? null;
-
-                if ($resultCode === 0 && $transaction->purpose === 'sms_topup') {
-                    // Unlike a rent/deposit Payment, an SMS wallet credit
-                    // carries no uniqueness guard on its (nullable) receipt
-                    // number — it's informational, not a dedup key — so
-                    // there's no audit-trail risk in crediting straight from
-                    // Safaricom's own confirmation here. Routed through the
-                    // same processResult() the real callback uses, so the
-                    // locking/idempotency guarantees still apply.
-                    $callbackController->processResult($transaction->checkout_request_id, $resultCode, $resultDesc);
-                    $resolved++;
-
-                    continue;
-                }
-
-                if ($resultCode === 0) {
-                    // Safaricom confirms this succeeded, but the status
-                    // query carries no CallbackMetadata — no M-Pesa receipt
-                    // number, no confirmed settled amount. Crediting the
-                    // tenant from a guess would record a Payment with no
-                    // real receipt behind it, which breaks both the A3
-                    // duplicate-receipt guard and the audit trail. Flagged
-                    // for the landlord to verify and enter manually instead.
-                    $this->flagForManualVerification($transaction, $resultDesc);
-                    $needsReview++;
-
-                    continue;
-                }
-
-                // A definitive failure/cancellation needs no metadata —
-                // the exact same path the real callback would have taken.
-                $callbackController->processResult($transaction->checkout_request_id, $resultCode, $resultDesc);
+            if (in_array($query->interpreted_as, ['sms_topup_credited', 'provider_result_applied'], true)) {
                 $resolved++;
 
                 continue;
             }
 
-            // Safaricom has no answer either (still processing, or the
-            // query itself failed) — give up after a longer window, same
-            // reasoning the client-side timeout already uses.
+            if ($query->interpreted_as === 'escalated_manual_verification') {
+                $escalated++;
+
+                continue;
+            }
+
+            // Inconclusive (no answer at all) — give up waiting for a quick
+            // resolution after a longer window and escalate it too, same
+            // reasoning the client-side timeout already used, but without
+            // ever closing the transaction out.
             if ($transaction->created_at->lt(now()->subMinutes(10))) {
-                $transaction->update(['status' => 'timeout']);
-                $timedOut++;
+                $investigation->escalateForManualVerification(
+                    $transaction,
+                    null,
+                    "Safaricom has not confirmed what happened to this payment after repeated status queries over 10+ minutes — needs manual verification against the tenant's M-Pesa statement, then recording via Record Payment if it did go through.",
+                );
+                $escalated++;
             }
         }
 
-        $this->info("Reconciled {$resolved}, timed out {$timedOut}, flagged {$needsReview} for manual verification.");
+        $this->info("Reconciled {$resolved}, escalated {$escalated} for manual verification.");
 
         return self::SUCCESS;
-    }
-
-    private function flagForManualVerification(MpesaTransaction $transaction, ?string $resultDesc): void
-    {
-        $transaction->update([
-            'result_code' => 0,
-            'result_desc' => 'Safaricom confirms this payment succeeded, but no callback was ever received — needs manual verification against the tenant\'s M-Pesa statement, then recording via Record Payment.',
-            'status' => 'failed',
-        ]);
-
-        Log::critical('M-Pesa reconciliation found a successful payment with no callback ever received.', [
-            'transaction_id' => $transaction->id,
-            'checkout_request_id' => $transaction->checkout_request_id,
-            'result_desc' => $resultDesc,
-        ]);
-
-        $tenancy = $transaction->tenancy()->with('house.block.property', 'tenant')->first();
-
-        if (! $tenancy) {
-            return;
-        }
-
-        $notifications = app(NotificationService::class);
-
-        $notifications->notify(
-            $tenancy->house->block->property->landlord,
-            'mpesa_callback_missed',
-            'An M-Pesa Payment May Need Manual Verification',
-            "{$tenancy->tenant->name} ({$tenancy->house->house_number}) attempted an M-Pesa payment of KSh ".number_format((float) $transaction->amount, 2).
-                ' that Safaricom confirms went through, but no callback was ever received by this system — please check your M-Pesa statement and record it manually if it did go through.',
-            ['in_app', 'email'],
-            $tenancy,
-        );
-
-        // Previously silent on the tenant's side entirely — if they'd
-        // already closed the app (the only other place this ever showed
-        // was the ephemeral pay page's own live status, gone on reload),
-        // they had no way to know their money may have gone through and
-        // that paying again could double-charge them.
-        if ($tenancy->tenant) {
-            $notifications->notify(
-                $tenancy->tenant,
-                'mpesa_payment_needs_verification',
-                'Payment Needs Verification',
-                'Your M-Pesa payment of KSh '.number_format((float) $transaction->amount, 2)." may have gone through, but we're still confirming it with your landlord — please don't pay again until this is resolved.",
-                ['in_app'],
-                $tenancy,
-            );
-        }
     }
 }

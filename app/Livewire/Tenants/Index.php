@@ -44,6 +44,38 @@ class Index extends Component
         $this->resetPage();
     }
 
+    /**
+     * KNOWN FINANCIAL AUDIT-RETENTION LIMITATION (flagged during the Phase 4
+     * audit, Finding 4 — deliberately left unchanged in that phase, pending
+     * a separate decision; see that phase's final report for the full
+     * reasoning):
+     *
+     * This only blocks deletion while an OCCUPYING tenancy exists. A tenant
+     * whose tenancy has ended still hard-deletes here, and the existing FK
+     * chain (tenants -> tenancies -> mpesa_transactions -> mpesa_status_queries,
+     * each cascadeOnDelete()) means every M-Pesa transaction and its entire
+     * query-history/investigation audit trail for that tenant is destroyed
+     * along with it — including any already resolved 'success' transaction
+     * tied to a real, settled payment. Payments/DepositPayments themselves
+     * are NOT FK-cascaded (their tenancy_id references are left orphaned,
+     * not deleted), but their mpesa_transaction_id back-reference and the
+     * MpesaTransaction row it pointed to are gone, and nothing here asks
+     * whether this tenant has any payment/financial history before allowing
+     * the delete.
+     *
+     * This is a pre-existing characteristic of this feature, not something
+     * Finding 4 introduced — mpesa_transactions.tenancy_id already cascaded
+     * before this phase. Changing it (e.g. a restrictOnDelete() FK, or
+     * checking financial history here) would alter this existing,
+     * already-shipped delete workflow's behaviour for landlords/managers
+     * using it today, so it is deliberately left alone pending an explicit,
+     * separate decision — recommended options: (a) block deletion outright
+     * for a tenant with any Payment/DepositPayment/MpesaTransaction history,
+     * mirroring the OCCUPYING_STATUSES check above, or (b) replace the hard
+     * delete with a soft-delete/anonymisation that retains the financial
+     * rows while scrubbing personal data, which also sidesteps the FK
+     * cascade entirely.
+     */
     public function delete(Tenant $tenant): void
     {
         $this->authorize('delete', $tenant);
