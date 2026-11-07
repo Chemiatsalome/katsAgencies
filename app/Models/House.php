@@ -45,6 +45,18 @@ class House extends Model
         return self::BEDROOMS_BY_TYPE[$type] ?? null;
     }
 
+    /** Human-readable labels for water_arrangement/electricity_arrangement — Phase 6 audit, P6-M-01. Mirrors the enum's own 3 values; anything missing or unrecognised degrades to a neutral label rather than printing a raw enum string or breaking. */
+    public const UTILITY_ARRANGEMENT_LABELS = [
+        'shared' => 'Shared',
+        'separate_meter' => 'Separately metered',
+        'included' => 'Included in rent',
+    ];
+
+    public static function utilityArrangementLabel(?string $value): string
+    {
+        return self::UTILITY_ARRANGEMENT_LABELS[$value] ?? 'Not specified';
+    }
+
     protected static function booted(): void
     {
         // documents() is polymorphic — there's no DB-level FK to cascade

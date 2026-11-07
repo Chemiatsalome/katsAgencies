@@ -150,9 +150,27 @@ class MyTenancy extends Component
             ->findOrFail($requestId);
     }
 
+    /**
+     * Phase 6 audit, verification round 2: ownNotice()/ownRenewalRequest()
+     * deliberately scope by tenant_id across every tenancy the tenant has
+     * ever had (correct for read access — a tenant can still see history
+     * tied to a past tenancy), but a write action gated on "this requires
+     * an active tenancy" needs this additional check. isOpen() /
+     * 'alternative_proposed' alone say nothing about whether the TENANCY
+     * itself is still occupying — confirmed independent state machines
+     * (TenancyNotice::OPEN_STATUSES has no tie to Tenancy::status at all),
+     * so a notice/request can still read as open/pending long after its
+     * own tenancy has ended.
+     */
+    private function assertBelongsToActiveTenancy(int $tenancyId): void
+    {
+        abort_unless($this->currentTenancy()->id === $tenancyId, 404);
+    }
+
     public function respondToRenewalAlternative(int $requestId, bool $accept): void
     {
         $request = $this->ownRenewalRequest($requestId);
+        $this->assertBelongsToActiveTenancy($request->tenancy_id);
 
         try {
             app(TenancyRenewalService::class)->respondToAlternative($request, Auth::user()->tenant->id, $accept);
@@ -177,6 +195,7 @@ class MyTenancy extends Component
     public function acknowledgeNotice(int $noticeId): void
     {
         $notice = $this->ownNotice($noticeId);
+        $this->assertBelongsToActiveTenancy($notice->tenancy_id);
 
         app(TenancyNoticeService::class)->acknowledge($notice, Auth::user()->tenant->id);
 
@@ -197,6 +216,7 @@ class MyTenancy extends Component
     public function submitDispute(int $noticeId): void
     {
         $notice = $this->ownNotice($noticeId);
+        $this->assertBelongsToActiveTenancy($notice->tenancy_id);
 
         $this->validate(['dispute_note' => ['required', 'string', 'max:2000']]);
 
@@ -227,6 +247,7 @@ class MyTenancy extends Component
     public function submitRequestTime(int $noticeId): void
     {
         $notice = $this->ownNotice($noticeId);
+        $this->assertBelongsToActiveTenancy($notice->tenancy_id);
 
         $this->validate([
             'requested_new_vacate_date' => ['required', 'date', 'after:today'],
@@ -261,6 +282,7 @@ class MyTenancy extends Component
     public function submitRequestExtension(int $noticeId): void
     {
         $notice = $this->ownNotice($noticeId);
+        $this->assertBelongsToActiveTenancy($notice->tenancy_id);
 
         $this->validate(['request_extension_note' => ['nullable', 'string', 'max:2000']]);
 
@@ -281,12 +303,25 @@ class MyTenancy extends Component
     public function render()
     {
         $tenant = Auth::user()->tenant;
-        $currentTenancy = $tenant?->currentTenancy();
-        $currentTenancy?->load('house.block.property');
+        // Phase 6 audit, P6-H-01: falls back to the tenant's most recent
+        // tenancy once none is active, so a tenant who has moved out can
+        // still see their own historical tenancy details and documents —
+        // display only. Every write action above (submitChangeRequest(),
+        // submitRenewalRequest(), ...) keeps using its own private
+        // currentTenancy() helper, unchanged, so none of them gain the
+        // ability to act against a tenancy this fallback alone surfaced.
+        $displayTenancy = $tenant?->currentOrMostRecentTenancy();
+        $displayTenancy?->load('house.block.property');
+
+        // Whether this tenancy can actually originate a new request today
+        // — never true for whatever the fallback above surfaced once it's
+        // no longer occupying, so the view can hide (not just the service
+        // layer block) every new-action control for a historical tenancy.
+        $isOccupying = $displayTenancy && in_array($displayTenancy->status, \App\Models\Tenancy::OCCUPYING_STATUSES, true);
 
         $pastTenancies = $tenant
             ? $tenant->tenancies()->with('house.block.property')
-                ->when($currentTenancy, fn ($q) => $q->where('id', '!=', $currentTenancy->id))
+                ->when($displayTenancy, fn ($q) => $q->where('id', '!=', $displayTenancy->id))
                 ->orderByDesc('move_in_date')
                 ->get()
             : collect();
@@ -297,21 +332,30 @@ class MyTenancy extends Component
         // anything uploaded through the generic Documents widget on the
         // landlord's Tenancy page (an ID request, a notice, whatever) was
         // invisible to the tenant it actually concerned.
-        $documents = $currentTenancy
-            ? $currentTenancy->documents()->where('category', '!=', 'lease_agreement')->latest()->get()
+        //
+        // Phase 6 audit, P6-M-02 — investigated, no code change needed
+        // here: tenancy-notice and change-request evidence is attached
+        // directly to the TenancyNotice/TenancyChangeRequest itself (see
+        // TenancyNoticeService/TenancyChangeRequestService), not to this
+        // Tenancy, so it was never selected by this query at all — no
+        // duplicate ever existed via this path. Confirmed by regression
+        // test rather than assumed.
+        $documents = $displayTenancy
+            ? $displayTenancy->documents()->where('category', '!=', 'lease_agreement')->latest()->get()
             : collect();
 
         return view('livewire.tenant.my-tenancy', [
-            'tenancy' => $currentTenancy,
+            'tenancy' => $displayTenancy,
+            'isOccupying' => $isOccupying,
             'pastTenancies' => $pastTenancies,
             'documents' => $documents,
             'categoryLabels' => \App\Livewire\Documents\Manager::CATEGORIES,
-            'activeNotice' => $currentTenancy?->activeNotice(),
-            'noticeHistory' => $currentTenancy ? $currentTenancy->notices()->with('events')->orderByDesc('sequence_number')->get() : collect(),
-            'changeRequestHistory' => $currentTenancy ? $currentTenancy->changeRequests()->latest()->get() : collect(),
-            'canRenew' => (bool) $currentTenancy?->renewalRelevant(),
-            'activeRenewalRequest' => $currentTenancy?->activeRenewalRequest(),
-            'renewalHistory' => $currentTenancy ? $currentTenancy->renewalRequests()->latest()->get() : collect(),
+            'activeNotice' => $displayTenancy?->activeNotice(),
+            'noticeHistory' => $displayTenancy ? $displayTenancy->notices()->with('events')->orderByDesc('sequence_number')->get() : collect(),
+            'changeRequestHistory' => $displayTenancy ? $displayTenancy->changeRequests()->latest()->get() : collect(),
+            'canRenew' => $isOccupying && (bool) $displayTenancy?->renewalRelevant(),
+            'activeRenewalRequest' => $displayTenancy?->activeRenewalRequest(),
+            'renewalHistory' => $displayTenancy ? $displayTenancy->renewalRequests()->latest()->get() : collect(),
         ]);
     }
 }

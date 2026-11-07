@@ -150,6 +150,21 @@ class Tenant extends Model
         return $this->tenancies()->latest('move_in_date')->latest('id')->first();
     }
 
+    /**
+     * Phase 6 audit, P6-H-01: the tenant's active tenancy when one exists,
+     * otherwise their most recent one regardless of status — lets a tenant
+     * who has moved out still reach their own historical tenancy details
+     * and signed contract (My Tenancy, My Contract), the same fallback
+     * Tenant\Statements/Tenant\Payments already use, while every write
+     * action on those two pages keeps resolving through currentTenancy()
+     * directly and unchanged, so nothing historical ever gains the ability
+     * to initiate a new change, renewal, or signature.
+     */
+    public function currentOrMostRecentTenancy(): ?Tenancy
+    {
+        return $this->currentTenancy() ?? $this->mostRecentTenancy();
+    }
+
     public function complaints(): HasMany
     {
         return $this->hasMany(Complaint::class);

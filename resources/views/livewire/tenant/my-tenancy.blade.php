@@ -15,14 +15,23 @@
 
                 @if (! $tenancy)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-brand-slate">
-                        No active tenancy is linked to your account yet.
+                        No tenancy is linked to your account yet.
                     </div>
                 @else
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-4">
                         <div class="flex items-center justify-between">
-                            <h3 class="text-sm font-semibold text-charcoal">Current Tenancy</h3>
+                            {{-- Phase 6 audit, P6-H-01: this can now be a historical tenancy
+                                 (no occupying tenancy exists) — labelled accordingly so it never
+                                 reads as if it were still live. --}}
+                            <h3 class="text-sm font-semibold text-charcoal">{{ $isOccupying ? 'Current Tenancy' : 'Most Recent Tenancy' }}</h3>
                             <x-status-badge :status="$tenancy->status" />
                         </div>
+
+                        @unless ($isOccupying)
+                            <div class="rounded-md bg-gray-50 border border-brand-border text-brand-slate text-xs px-3 py-2">
+                                This tenancy has ended — shown for your records. You can still view its details and your signed agreement, but new requests can no longer be submitted against it.
+                            </div>
+                        @endunless
 
                         <div class="grid grid-cols-2 gap-4 text-sm">
                             <div><p class="text-brand-slate">Property</p><p class="font-medium text-charcoal">{{ $tenancy->house->block->property->name }}</p></div>
@@ -47,6 +56,12 @@
                             </div>
                         </div>
 
+                        {{-- Phase 6 audit, P6-H-01: none of these new-request controls are
+                             offered once this is a historical (non-occupying) tenancy —
+                             submitChangeRequest()/submitRenewalRequest() already refuse to
+                             act on one regardless, via their own unchanged currentTenancy()
+                             resolution; this just stops the form from being offered at all. --}}
+                        @if ($isOccupying)
                         <div class="pt-3 border-t border-brand-border flex flex-wrap gap-3">
                             <button wire:click="openRequestChangeForm" class="text-sm text-teal hover:underline">Request a Change</button>
                             @if ($canRenew)
@@ -136,6 +151,25 @@
                                 </div>
                             </form>
                         @endif
+                        @endif
+                    </div>
+
+                    {{-- Phase 6 audit, P6-M-01: water/electricity arrangement was
+                         collected from the landlord at setup but never shown to the
+                         tenant anywhere. Read-only — no billing, metering or payment
+                         behaviour here, just the landlord's own configured labels. --}}
+                    <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-3">
+                        <h3 class="text-sm font-semibold text-charcoal">Utilities</h3>
+                        <div class="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <p class="text-brand-slate">Water</p>
+                                <p class="font-medium text-charcoal">{{ \App\Models\House::utilityArrangementLabel($tenancy->house->water_arrangement) }}</p>
+                            </div>
+                            <div>
+                                <p class="text-brand-slate">Electricity</p>
+                                <p class="font-medium text-charcoal">{{ \App\Models\House::utilityArrangementLabel($tenancy->house->electricity_arrangement) }}</p>
+                            </div>
+                        </div>
                     </div>
                 @endif
 
@@ -242,11 +276,11 @@
                                             <p class="text-brand-slate mt-1">{{ $activeNotice->tenant_response_note }}</p>
                                         @endif
                                     </div>
-                                @elseif (! $activeNotice->acknowledged_at)
+                                @elseif (! $activeNotice->acknowledged_at && $isOccupying)
                                     <button wire:click="acknowledgeNotice({{ $activeNotice->id }})" class="text-sm text-teal hover:underline">Acknowledge Receipt</button>
                                 @endif
 
-                                @if ($activeNotice->isOpen() && ! $activeNotice->tenant_response_type)
+                                @if ($isOccupying && $activeNotice->isOpen() && ! $activeNotice->tenant_response_type)
                                     <div class="flex flex-wrap gap-3 pt-2 border-t border-warning/20">
                                         <button wire:click="openDisputeForm" class="text-sm text-danger hover:underline">Dispute This Notice</button>
                                         <button wire:click="openRequestTimeForm" class="text-sm text-teal hover:underline">Request More Time</button>

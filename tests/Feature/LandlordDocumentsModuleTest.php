@@ -253,4 +253,342 @@ class LandlordDocumentsModuleTest extends TestCase
         Storage::disk('local')->assertMissing($propertyDoc->path);
         Storage::disk('local')->assertMissing($houseDoc->path);
     }
+
+    /**
+     * Phase 6 audit, P6-H-02: DocumentPolicy::accessibleByUser() had no
+     * case for DepositDeduction-attached documents at all, so it fell to
+     * default => false for everyone but admin — neither the tenant
+     * disputing a deduction nor the landlord who recorded it could open
+     * the evidence a link on their own page rendered.
+     */
+    private function depositDeductionWithEvidence(Tenancy $tenancy, int $recordedBy): Document
+    {
+        $deduction = \App\Models\DepositDeduction::create([
+            'tenancy_id' => $tenancy->id,
+            'amount' => 2000,
+            'reason' => 'Broken window pane',
+            'deduction_date' => now()->toDateString(),
+            'recorded_by' => $recordedBy,
+        ]);
+
+        return Document::create([
+            'documentable_type' => $deduction->getMorphClass(),
+            'documentable_id' => $deduction->id,
+            'category' => 'deposit_deduction_evidence',
+            'original_filename' => 'broken-window.jpg',
+            'path' => UploadedFile::fake()->create('broken-window.jpg', 100)->store('documents', 'local'),
+            'mime_type' => 'image/jpeg',
+            'size' => 100,
+            'uploaded_by' => $recordedBy,
+        ]);
+    }
+
+    public function test_tenant_can_view_their_own_deposit_deduction_evidence(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $tenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $tenancy->tenant, $tenancy->tenant->name, 'deduction-evidence-tenant@example.test', 'password'
+        );
+
+        $document = $this->depositDeductionWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($tenantUser)->get(route('documents.show', $document))->assertOk();
+
+        // A different tenant entirely must still be refused.
+        $otherTenant = Tenant::create(['name' => 'Someone Else', 'phone' => '0700000998', 'payment_due_day' => 1]);
+        $otherTenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $otherTenant, $otherTenant->name, 'other-deduction-tenant@example.test', 'password'
+        );
+        $this->actingAs($otherTenantUser)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_landlord_can_view_deposit_deduction_evidence_for_their_own_property_but_not_another_landlords(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+
+        $document = $this->depositDeductionWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($landlord)->get(route('documents.show', $document))->assertOk();
+
+        $otherLandlord = User::factory()->create(['status' => 'active']);
+        $otherLandlord->assignRole('landlord');
+        $this->actingAs($otherLandlord)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    /** Requirement: managers must remain restricted to properties they are authorized to manage — never granted their landlord's full portfolio by this fix. */
+    public function test_a_manager_without_access_to_the_property_cannot_view_deposit_deduction_evidence(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->depositDeductionWithEvidence($tenancy, $landlord->id);
+
+        $restrictedManagerUser = User::factory()->create(['status' => 'active']);
+        $restrictedManagerUser->assignRole('manager');
+        $restrictedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $restrictedManagerUser->id, 'name' => $restrictedManagerUser->name,
+            'phone' => '0700000223', 'email' => $restrictedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        // Deliberately not attached to the property this tenancy belongs to.
+        $otherProperty = Property::create(['landlord_id' => $landlord->id, 'name' => 'Unrelated Property', 'type' => 'apartment', 'status' => 'active']);
+        $restrictedManager->properties()->attach($otherProperty->id);
+
+        $this->actingAs($restrictedManagerUser)->get(route('documents.show', $document))->assertForbidden();
+
+        // A manager who IS delegated the right property must succeed.
+        $authorizedManagerUser = User::factory()->create(['status' => 'active']);
+        $authorizedManagerUser->assignRole('manager');
+        $authorizedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $authorizedManagerUser->id, 'name' => $authorizedManagerUser->name,
+            'phone' => '0700000224', 'email' => $authorizedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $authorizedManager->properties()->attach($tenancy->house->block->property_id);
+
+        $this->actingAs($authorizedManagerUser)->get(route('documents.show', $document))->assertOk();
+    }
+
+    /**
+     * Follow-up to P6-H-02: TenancyNotice/TenancyChangeRequest evidence had
+     * exactly the same gap — no case in DocumentPolicy at all, attached
+     * directly to the notice/request itself (confirmed in
+     * TenancyNoticeService/TenancyChangeRequestService), not the Tenancy.
+     */
+    private function tenancyNoticeWithEvidence(Tenancy $tenancy, int $uploadedBy): Document
+    {
+        $notice = \App\Models\TenancyNotice::create([
+            'tenancy_id' => $tenancy->id,
+            'sequence_number' => 1,
+            'notice_date' => now(),
+            'reason_category' => 'other',
+            'status' => 'issued',
+        ]);
+
+        return Document::create([
+            'documentable_type' => $notice->getMorphClass(),
+            'documentable_id' => $notice->id,
+            'category' => 'tenancy_notice_evidence',
+            'original_filename' => 'notice-evidence.pdf',
+            'path' => UploadedFile::fake()->create('notice-evidence.pdf', 100)->store('documents', 'local'),
+            'mime_type' => 'application/pdf',
+            'size' => 100,
+            'uploaded_by' => $uploadedBy,
+        ]);
+    }
+
+    private function tenancyChangeRequestWithEvidence(Tenancy $tenancy, int $uploadedBy): Document
+    {
+        $request = \App\Models\TenancyChangeRequest::create([
+            'tenancy_id' => $tenancy->id,
+            'category' => 'other',
+            'requested_change' => 'Please adjust my rent due date',
+            'status' => 'pending',
+        ]);
+
+        return Document::create([
+            'documentable_type' => $request->getMorphClass(),
+            'documentable_id' => $request->id,
+            'category' => 'change_request_evidence',
+            'original_filename' => 'change-request-evidence.pdf',
+            'path' => UploadedFile::fake()->create('change-request-evidence.pdf', 100)->store('documents', 'local'),
+            'mime_type' => 'application/pdf',
+            'size' => 100,
+            'uploaded_by' => $uploadedBy,
+        ]);
+    }
+
+    public function test_tenant_can_view_their_own_tenancy_notice_evidence_but_not_another_tenants(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $tenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $tenancy->tenant, $tenancy->tenant->name, 'notice-evidence-tenant@example.test', 'password'
+        );
+
+        $document = $this->tenancyNoticeWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($tenantUser)->get(route('documents.show', $document))->assertOk();
+
+        $otherTenant = Tenant::create(['name' => 'Someone Else', 'phone' => '0700000997', 'payment_due_day' => 1]);
+        $otherTenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $otherTenant, $otherTenant->name, 'other-notice-tenant@example.test', 'password'
+        );
+        $this->actingAs($otherTenantUser)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_landlord_can_view_tenancy_notice_evidence_for_their_own_property_but_not_another_landlords(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->tenancyNoticeWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($landlord)->get(route('documents.show', $document))->assertOk();
+
+        $otherLandlord = User::factory()->create(['status' => 'active']);
+        $otherLandlord->assignRole('landlord');
+        $this->actingAs($otherLandlord)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_a_manager_without_access_to_the_property_cannot_view_tenancy_notice_evidence(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->tenancyNoticeWithEvidence($tenancy, $landlord->id);
+
+        $restrictedManagerUser = User::factory()->create(['status' => 'active']);
+        $restrictedManagerUser->assignRole('manager');
+        $restrictedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $restrictedManagerUser->id, 'name' => $restrictedManagerUser->name,
+            'phone' => '0700000225', 'email' => $restrictedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $otherProperty = Property::create(['landlord_id' => $landlord->id, 'name' => 'Unrelated Property Notice', 'type' => 'apartment', 'status' => 'active']);
+        $restrictedManager->properties()->attach($otherProperty->id);
+
+        $this->actingAs($restrictedManagerUser)->get(route('documents.show', $document))->assertForbidden();
+
+        $authorizedManagerUser = User::factory()->create(['status' => 'active']);
+        $authorizedManagerUser->assignRole('manager');
+        $authorizedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $authorizedManagerUser->id, 'name' => $authorizedManagerUser->name,
+            'phone' => '0700000226', 'email' => $authorizedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $authorizedManager->properties()->attach($tenancy->house->block->property_id);
+
+        $this->actingAs($authorizedManagerUser)->get(route('documents.show', $document))->assertOk();
+    }
+
+    public function test_tenant_can_view_their_own_change_request_evidence_but_not_another_tenants(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $tenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $tenancy->tenant, $tenancy->tenant->name, 'change-request-evidence-tenant@example.test', 'password'
+        );
+
+        $document = $this->tenancyChangeRequestWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($tenantUser)->get(route('documents.show', $document))->assertOk();
+
+        $otherTenant = Tenant::create(['name' => 'Someone Else', 'phone' => '0700000996', 'payment_due_day' => 1]);
+        $otherTenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $otherTenant, $otherTenant->name, 'other-change-request-tenant@example.test', 'password'
+        );
+        $this->actingAs($otherTenantUser)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_landlord_can_view_change_request_evidence_for_their_own_property_but_not_another_landlords(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->tenancyChangeRequestWithEvidence($tenancy, $landlord->id);
+
+        $this->actingAs($landlord)->get(route('documents.show', $document))->assertOk();
+
+        $otherLandlord = User::factory()->create(['status' => 'active']);
+        $otherLandlord->assignRole('landlord');
+        $this->actingAs($otherLandlord)->get(route('documents.show', $document))->assertForbidden();
+    }
+
+    public function test_a_manager_without_access_to_the_property_cannot_view_change_request_evidence(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $document = $this->tenancyChangeRequestWithEvidence($tenancy, $landlord->id);
+
+        $restrictedManagerUser = User::factory()->create(['status' => 'active']);
+        $restrictedManagerUser->assignRole('manager');
+        $restrictedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $restrictedManagerUser->id, 'name' => $restrictedManagerUser->name,
+            'phone' => '0700000227', 'email' => $restrictedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $otherProperty = Property::create(['landlord_id' => $landlord->id, 'name' => 'Unrelated Property Change Request', 'type' => 'apartment', 'status' => 'active']);
+        $restrictedManager->properties()->attach($otherProperty->id);
+
+        $this->actingAs($restrictedManagerUser)->get(route('documents.show', $document))->assertForbidden();
+
+        $authorizedManagerUser = User::factory()->create(['status' => 'active']);
+        $authorizedManagerUser->assignRole('manager');
+        $authorizedManager = ManagerModel::create([
+            'landlord_id' => $landlord->id, 'user_id' => $authorizedManagerUser->id, 'name' => $authorizedManagerUser->name,
+            'phone' => '0700000228', 'email' => $authorizedManagerUser->email, 'all_properties' => false, 'status' => 'active',
+            'token' => ManagerModel::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        $authorizedManager->properties()->attach($tenancy->house->block->property_id);
+
+        $this->actingAs($authorizedManagerUser)->get(route('documents.show', $document))->assertOk();
+    }
+
+    /**
+     * Final verification requested before committing Phase 6's follow-up:
+     * admin access is a global Gate::before (hasRole('admin') ? true : null,
+     * see AppServiceProvider::boot()) that short-circuits before
+     * DocumentPolicy::accessibleByUser() ever runs — the new
+     * DepositDeduction/TenancyNotice/TenancyChangeRequest cases added this
+     * phase are structurally unreachable for an admin, so they cannot have
+     * changed admin access. Confirmed directly rather than assumed, and
+     * cross-checked against an unrelated, pre-existing document type
+     * (Property) to confirm inserting the new match arms didn't disturb
+     * anything already there.
+     */
+    public function test_admin_can_view_every_new_document_type_added_this_phase_and_an_unrelated_existing_one(): void
+    {
+        Storage::fake('local');
+        $this->seed();
+
+        $admin = User::role('admin')->firstOrFail();
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+
+        $deductionDoc = $this->depositDeductionWithEvidence($tenancy, $landlord->id);
+        $noticeDoc = $this->tenancyNoticeWithEvidence($tenancy, $landlord->id);
+        $changeRequestDoc = $this->tenancyChangeRequestWithEvidence($tenancy, $landlord->id);
+
+        $propertyDoc = Document::create([
+            'documentable_type' => $tenancy->house->block->property->getMorphClass(),
+            'documentable_id' => $tenancy->house->block->property->id,
+            'category' => 'property_document',
+            'original_filename' => 'unrelated-existing-type.pdf',
+            'path' => UploadedFile::fake()->create('unrelated-existing-type.pdf', 100)->store('documents', 'local'),
+            'mime_type' => 'application/pdf',
+            'size' => 100,
+            'uploaded_by' => $landlord->id,
+        ]);
+
+        $this->actingAs($admin)->get(route('documents.show', $deductionDoc))->assertOk();
+        $this->actingAs($admin)->get(route('documents.show', $noticeDoc))->assertOk();
+        $this->actingAs($admin)->get(route('documents.show', $changeRequestDoc))->assertOk();
+        $this->actingAs($admin)->get(route('documents.show', $propertyDoc))->assertOk();
+    }
 }

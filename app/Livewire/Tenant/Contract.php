@@ -35,9 +35,29 @@ class Contract extends Component
         $this->showDueDayHistory = ! $this->showDueDayHistory;
     }
 
+    /**
+     * Strictly the active tenancy, or null — every write action
+     * (sign(), requestDueDayChange()) resolves through this one, unchanged,
+     * so none of them can ever act against a historical tenancy even
+     * though render() below now also accepts one for display.
+     */
     private function activeTenancy()
     {
         $tenancy = Auth::user()->tenant?->currentTenancy();
+        $tenancy?->load('house.block.property');
+
+        return $tenancy;
+    }
+
+    /**
+     * Phase 6 audit, P6-H-01: falls back to the tenant's most recent
+     * tenancy once none is active, so a tenant who has moved out can still
+     * view their own historical tenancy's contract and signed agreement —
+     * render()-only; never used by a write action.
+     */
+    private function displayTenancy()
+    {
+        $tenancy = Auth::user()->tenant?->currentOrMostRecentTenancy();
         $tenancy?->load('house.block.property');
 
         return $tenancy;
@@ -139,8 +159,14 @@ class Contract extends Component
 
     public function render()
     {
-        $tenancy = $this->activeTenancy();
+        $tenancy = $this->displayTenancy();
         $contract = $tenancy?->contract;
+
+        // Phase 6 audit, P6-H-01: whether this tenancy can originate a new
+        // signature or due-date request today — sign()/requestDueDayChange()
+        // already refuse either way via their own unchanged activeTenancy()
+        // resolution; this only controls what the view offers.
+        $isOccupying = $tenancy && in_array($tenancy->status, \App\Models\Tenancy::OCCUPYING_STATUSES, true);
 
         $documents = $tenancy
             ? $tenancy->documents()->where('category', 'lease_agreement')->latest()->get()
@@ -148,6 +174,7 @@ class Contract extends Component
 
         return view('livewire.tenant.contract', [
             'tenancy' => $tenancy,
+            'isOccupying' => $isOccupying,
             'contract' => $contract,
             'documents' => $documents,
             'hasIdDocument' => $this->hasIdDocument($tenancy),

@@ -14,14 +14,23 @@
 
                 @if (! $tenancy)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-brand-slate">
-                        No active tenancy is linked to your account yet.
+                        No tenancy is linked to your account yet.
                     </div>
                 @elseif (! $contract)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-brand-slate">
                         Your landlord hasn't generated your tenancy agreement yet.
                     </div>
                 @else
-                    @if ($contract->isAwaitingSignature())
+                    {{-- Phase 6 audit, P6-H-01: this can now be a historical (non-occupying)
+                         tenancy's contract — shown read-only, no signature form, since
+                         sign() itself only ever acts against the active tenancy regardless. --}}
+                    @unless ($isOccupying)
+                        <div class="rounded-md bg-gray-50 border border-brand-border text-brand-slate text-xs px-3 py-2">
+                            This tenancy has ended — shown for your records.
+                        </div>
+                    @endunless
+
+                    @if ($contract->isAwaitingSignature() && $isOccupying)
                         <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-4">
                             <div>
                                 <h3 class="text-sm font-semibold text-charcoal mb-1">Tenancy Agreement — Awaiting Your Signature</h3>
@@ -30,9 +39,14 @@
 
                             @if ($contract->body_snapshot)
                                 <div class="border border-brand-border rounded-md p-4 max-h-80 overflow-y-auto text-sm text-charcoal whitespace-pre-wrap bg-offwhite">{{ $contract->body_snapshot }}</div>
-                            @elseif ($contract->document)
+                            @elseif ($contract->document?->isPdf())
                                 <embed src="{{ $contract->document->url() }}" type="application/pdf" class="w-full h-96 rounded-md border border-brand-border" />
                                 <a href="{{ $contract->document->url() }}" target="_blank" rel="noopener" class="text-teal hover:underline text-xs font-medium">Open in a new tab</a>
+                            @elseif ($contract->document)
+                                <div class="border border-brand-border rounded-md p-4 text-sm text-brand-slate bg-offwhite">
+                                    Your landlord uploaded <strong class="text-charcoal">{{ $contract->document->original_filename }}</strong> as your tenancy agreement. Your browser can't preview a Word document inline — open or download it to review before signing.
+                                </div>
+                                <a href="{{ $contract->document->url() }}" target="_blank" rel="noopener" class="text-teal hover:underline text-xs font-medium">Open / Download the agreement</a>
                             @endif
 
                             <form wire:submit="sign" class="space-y-4 border-t border-brand-border pt-4">
@@ -62,6 +76,11 @@
 
                                 <x-primary-button type="submit" wire:confirm="This will be recorded as your legal signature on this tenancy agreement. Continue?">Confirm &amp; Sign Contract</x-primary-button>
                             </form>
+                        </div>
+                    @elseif ($contract->isAwaitingSignature())
+                        {{-- Historical tenancy, never signed before it ended — read-only, no form. --}}
+                        <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 text-brand-slate">
+                            This agreement was never signed before the tenancy ended.
                         </div>
                     @elseif ($contract->isSigned())
                         <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6">
@@ -112,7 +131,11 @@
                                     <p class="text-xs text-brand-slate">"{{ $latestDecidedDueDayRequest->decision_note }}"</p>
                                 @endif
                             @endif
-                            <button wire:click="$set('showDueDayForm', true)" class="text-xs text-teal hover:underline">Request a different due date</button>
+                            {{-- requestDueDayChange() only ever acts against the active
+                                 tenancy regardless; hidden here too for a historical one. --}}
+                            @if ($isOccupying)
+                                <button wire:click="$set('showDueDayForm', true)" class="text-xs text-teal hover:underline">Request a different due date</button>
+                            @endif
                         @endif
 
                         @if ($dueDayHistory->isNotEmpty())

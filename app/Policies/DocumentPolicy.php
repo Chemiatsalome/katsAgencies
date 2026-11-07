@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Models\Complaint;
+use App\Models\DepositDeduction;
 use App\Models\DepositPayment;
 use App\Models\Disbursement;
 use App\Models\Document;
@@ -12,6 +13,8 @@ use App\Models\MaintenanceTask;
 use App\Models\Payment;
 use App\Models\Property;
 use App\Models\Tenancy;
+use App\Models\TenancyChangeRequest;
+use App\Models\TenancyNotice;
 use App\Models\Tenant;
 use App\Models\User;
 
@@ -81,6 +84,26 @@ class DocumentPolicy
             // added alongside the deposit offline-claim flow this document
             // category now comes from.
             $subject instanceof DepositPayment => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
+                || $subject->tenancy?->tenant_id === $user->tenant?->id,
+            // Phase 6 audit, P6-H-02: deposit-deduction evidence had no case
+            // here at all, so it fell to default => false for everyone but
+            // admin — the tenant disputing a deduction, and the landlord who
+            // recorded it, were both blocked from viewing the evidence a
+            // link on their own page offered. Same tenancy-rooted reasoning
+            // as Payment/DepositPayment above.
+            $subject instanceof DepositDeduction => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
+                || $subject->tenancy?->tenant_id === $user->tenant?->id,
+            // Phase 6 audit follow-up: tenancy-notice and change-request
+            // evidence is attached directly to the TenancyNotice/
+            // TenancyChangeRequest itself (confirmed in
+            // TenancyNoticeService/TenancyChangeRequestService — not to the
+            // Tenancy), and had no case here either, same gap as
+            // DepositDeduction above. Both models have their own tenancy_id
+            // + tenancy() exactly like Payment/DepositPayment/
+            // DepositDeduction, so the same tenancy-rooted scoping applies.
+            $subject instanceof TenancyNotice => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
+                || $subject->tenancy?->tenant_id === $user->tenant?->id,
+            $subject instanceof TenancyChangeRequest => Tenancy::accessibleBy($user)->whereKey($subject->tenancy_id)->exists()
                 || $subject->tenancy?->tenant_id === $user->tenant?->id,
             // Payout evidence (e.g. an admin's bank/M-Pesa confirmation slip
             // for a disbursement) — the landlord it was paid out to, only.
