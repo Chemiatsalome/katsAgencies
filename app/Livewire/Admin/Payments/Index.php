@@ -139,7 +139,7 @@ class Index extends Component
     public function render()
     {
         $query = MpesaTransaction::query()
-            ->with(['tenancy.tenant', 'tenancy.house.block.property.landlord', 'landlord', 'statusQueries', 'investigatedBy', 'cancellationRequestedBy'])
+            ->with(['tenancy.tenant', 'tenancy.house.block.property.landlord', 'landlord', 'statusQueries', 'investigatedBy', 'cancellationRequestedBy', 'landlordResponseBy'])
             ->latest('created_at');
 
         if ($this->status !== 'all') {

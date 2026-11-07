@@ -17,7 +17,7 @@ Route::get('dashboard', function () {
     };
 })->middleware(['auth', 'verified'])->name('dashboard');
 
-Route::view('profile', 'profile')
+Route::get('profile', \App\Livewire\Profile\Index::class)
     ->middleware(['auth'])
     ->name('profile');
 
@@ -75,8 +75,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     Route::get('reports/platform', \App\Livewire\Admin\Reports\Platform::class)->name('reports.platform');
     Route::get('reports/landlord', \App\Livewire\Admin\Reports\LandlordReport::class)->name('reports.landlord');
 
+    Route::get('payments', \App\Livewire\Admin\Payments\Index::class)->name('payments.index');
+
     Route::get('disbursements', \App\Livewire\Admin\Disbursements\Index::class)->name('disbursements.index');
     Route::get('disbursements/{landlord}', \App\Livewire\Admin\Disbursements\Show::class)->name('disbursements.show');
+    Route::get('sms-wallets', \App\Livewire\Admin\SmsWallets\Index::class)->name('sms-wallets.index');
     Route::get('support-tickets', \App\Livewire\Admin\SupportTickets\Index::class)->name('support-tickets.index');
 
     Route::get('users', \App\Livewire\Admin\Users\Index::class)->name('users.index');
@@ -87,7 +90,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
 
 Route::middleware(['auth', 'role:landlord'])->prefix('landlord')->name('landlord.')->group(function () {
     Route::get('dashboard', \App\Livewire\Landlord\Dashboard::class)->name('dashboard');
-    Route::get('payouts', \App\Livewire\Landlord\Payouts\Index::class)->name('payouts.index');
+    Route::get('payouts', \App\Livewire\Landlord\Payouts\Index::class)->name('payouts.index')->middleware('collection.confirmed');
+    Route::get('sms-wallet', \App\Livewire\Landlord\SmsWallet::class)->name('sms-wallet.index')->middleware('collection.confirmed');
 });
 
 Route::middleware(['auth', 'role:manager'])->prefix('manager')->name('manager.')->group(function () {
@@ -99,25 +103,30 @@ Route::middleware(['auth', 'role:manager'])->prefix('manager')->name('manager.')
 // route tree (per-page property/permission scoping happens inside each
 // component, not at this gate) rather than a duplicate set of routes.
 Route::middleware(['auth', 'role:landlord|manager'])->prefix('manage')->name('manage.')->group(function () {
-    // My Properties
-    Route::get('properties', \App\Livewire\Properties\Index::class)->name('properties.index');
-    Route::get('properties/create', \App\Livewire\Properties\Wizard::class)->name('properties.create');
-    Route::get('properties/import', \App\Livewire\Properties\Import::class)->name('properties.import');
-    Route::get('properties/{property}', \App\Livewire\Properties\Show::class)->name('properties.show');
-    Route::get('properties/{property}/edit', \App\Livewire\Properties\Form::class)->name('properties.edit');
+    // My Properties — gated the same as Rent & Finance below. The
+    // onboarding banner's own copy ("Before you start managing your
+    // properties...") only means something if property management
+    // actually waits for it.
+    Route::middleware('collection.confirmed')->group(function () {
+        Route::get('properties', \App\Livewire\Properties\Index::class)->name('properties.index');
+        Route::get('properties/create', \App\Livewire\Properties\Wizard::class)->name('properties.create');
+        Route::get('properties/import', \App\Livewire\Properties\Import::class)->name('properties.import');
+        Route::get('properties/{property}', \App\Livewire\Properties\Show::class)->name('properties.show');
+        Route::get('properties/{property}/edit', \App\Livewire\Properties\Form::class)->name('properties.edit');
 
-    Route::get('properties/{property}/blocks', \App\Livewire\Blocks\Index::class)->name('blocks.index');
-    Route::get('properties/{property}/blocks/create', \App\Livewire\Blocks\Form::class)->name('blocks.create');
-    Route::get('blocks/{block}/edit', \App\Livewire\Blocks\Form::class)->name('blocks.edit');
+        Route::get('properties/{property}/blocks', \App\Livewire\Blocks\Index::class)->name('blocks.index');
+        Route::get('properties/{property}/blocks/create', \App\Livewire\Blocks\Form::class)->name('blocks.create');
+        Route::get('blocks/{block}/edit', \App\Livewire\Blocks\Form::class)->name('blocks.edit');
 
-    Route::get('units', \App\Livewire\Units\Index::class)->name('units.index');
-    Route::get('blocks/{block}/houses', \App\Livewire\Houses\Index::class)->name('houses.index');
-    Route::get('blocks/{block}/houses/create', \App\Livewire\Houses\Form::class)->name('houses.create');
-    Route::get('houses/{house}', \App\Livewire\Houses\Show::class)->name('houses.show');
-    Route::get('houses/{house}/edit', \App\Livewire\Houses\Form::class)->name('houses.edit');
+        Route::get('units', \App\Livewire\Units\Index::class)->name('units.index');
+        Route::get('blocks/{block}/houses', \App\Livewire\Houses\Index::class)->name('houses.index');
+        Route::get('blocks/{block}/houses/create', \App\Livewire\Houses\Form::class)->name('houses.create');
+        Route::get('houses/{house}', \App\Livewire\Houses\Show::class)->name('houses.show');
+        Route::get('houses/{house}/edit', \App\Livewire\Houses\Form::class)->name('houses.edit');
 
-    Route::get('occupancy', \App\Livewire\Occupancy\Index::class)->name('occupancy.index');
-    Route::get('vacancies', \App\Livewire\Vacancies\Index::class)->name('vacancies.index');
+        Route::get('occupancy', \App\Livewire\Occupancy\Index::class)->name('occupancy.index');
+        Route::get('vacancies', \App\Livewire\Vacancies\Index::class)->name('vacancies.index');
+    });
 
     // Tenancy
     Route::get('tenants', \App\Livewire\Tenants\Index::class)->name('tenants.index');
@@ -129,6 +138,12 @@ Route::middleware(['auth', 'role:landlord|manager'])->prefix('manage')->name('ma
     Route::get('tenancies', \App\Livewire\Tenancies\Index::class)->name('tenancies.index');
     Route::get('tenancies/create', \App\Livewire\Tenancies\Form::class)->name('tenancies.create');
     Route::get('tenancies/{tenancy}', \App\Livewire\Tenancies\Show::class)->name('tenancies.show');
+
+    // The landlord-facing counterpart to Admin\Payments\Index, scoped to one
+    // stuck M-Pesa transaction — only ever reached via the notification
+    // link raised for it (see AppNotification::actionUrl()), never a page a
+    // landlord browses to directly.
+    Route::get('mpesa-investigations/{transaction}', \App\Livewire\Tenancies\MpesaInvestigation::class)->name('mpesa-investigations.show');
 
     // Portfolio-wide contract tracking — who's signed, who hasn't, and the
     // full version/signing history behind each tenancy's current contract.
@@ -148,19 +163,25 @@ Route::middleware(['auth', 'role:landlord|manager'])->prefix('manage')->name('ma
     Route::get('applications/create', \App\Livewire\Applications\Form::class)->name('applications.create');
     Route::get('applications/{application}', \App\Livewire\Applications\Show::class)->name('applications.show');
 
-    // Rent & Finance
-    Route::get('rent-charges', \App\Livewire\RentCharges\Index::class)->name('rent-charges.index');
-    Route::get('rent-charges/historical-review', \App\Livewire\RentCharges\HistoricalReview::class)->name('rent-charges.historical-review');
-    Route::get('arrears', \App\Livewire\Arrears\Index::class)->name('arrears.index');
-    Route::get('deposits', \App\Livewire\Deposits\Index::class)->name('deposits.index');
+    // Rent & Finance — collection-method-dependent pages only (see
+    // EnsureCollectionMethodConfirmed's own docblock for why
+    // expenses/income, the landlord's own cost tracking, stay out of this
+    // group).
+    Route::middleware('collection.confirmed')->group(function () {
+        Route::get('rent-charges', \App\Livewire\RentCharges\Index::class)->name('rent-charges.index');
+        Route::get('rent-charges/historical-review', \App\Livewire\RentCharges\HistoricalReview::class)->name('rent-charges.historical-review');
+        Route::get('arrears', \App\Livewire\Arrears\Index::class)->name('arrears.index');
+        Route::get('deposits', \App\Livewire\Deposits\Index::class)->name('deposits.index');
+        Route::get('finance/overview', \App\Livewire\Finance\Overview::class)->name('finance.overview');
+        Route::get('reports', \App\Livewire\Reports\Index::class)->name('reports.index');
+    });
+
     Route::get('expenses', \App\Livewire\Expenses\Index::class)->name('expenses.index');
     Route::get('expenses/create', \App\Livewire\Expenses\Form::class)->name('expenses.create');
     Route::get('expenses/{expense}/edit', \App\Livewire\Expenses\Form::class)->name('expenses.edit');
     Route::get('income', \App\Livewire\Income\Index::class)->name('income.index');
     Route::get('income/create', \App\Livewire\Income\Form::class)->name('income.create');
     Route::get('income/{income}/edit', \App\Livewire\Income\Form::class)->name('income.edit');
-    Route::get('finance/overview', \App\Livewire\Finance\Overview::class)->name('finance.overview');
-    Route::get('reports', \App\Livewire\Reports\Index::class)->name('reports.index');
 
     // Maintenance
     Route::get('maintenance', \App\Livewire\Maintenance\Index::class)->name('maintenance.index');
@@ -197,12 +218,15 @@ Route::middleware(['auth', 'role:landlord|manager'])->prefix('manage')->name('ma
 Route::middleware(['auth', 'role:landlord'])->prefix('manage')->name('manage.')->group(function () {
     // Settings
     Route::get('settings', \App\Livewire\Settings\Index::class)->name('settings.index');
+    Route::get('settings/daraja-guide', \App\Livewire\Settings\DarajaGuide::class)->name('settings.daraja-guide');
     Route::get('support', \App\Livewire\Support\Index::class)->name('support.index');
 
-    Route::get('managers', \App\Livewire\Managers\Index::class)->name('managers.index');
-    Route::get('managers/create', \App\Livewire\Managers\Form::class)->name('managers.create');
-    Route::get('managers/{manager}/edit', \App\Livewire\Managers\Form::class)->name('managers.edit');
-    Route::get('managers/{manager}/activity', \App\Livewire\Managers\Activity::class)->name('managers.activity');
+    Route::middleware('collection.confirmed')->group(function () {
+        Route::get('managers', \App\Livewire\Managers\Index::class)->name('managers.index');
+        Route::get('managers/create', \App\Livewire\Managers\Form::class)->name('managers.create');
+        Route::get('managers/{manager}/edit', \App\Livewire\Managers\Form::class)->name('managers.edit');
+        Route::get('managers/{manager}/activity', \App\Livewire\Managers\Activity::class)->name('managers.activity');
+    });
 });
 
 Route::middleware(['auth', 'role:tenant'])->prefix('tenant')->name('tenant.')->group(function () {

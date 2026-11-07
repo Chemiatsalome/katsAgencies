@@ -7,6 +7,7 @@ use App\Models\DepositPayment;
 use App\Models\MpesaStatusQuery;
 use App\Models\MpesaTransaction;
 use App\Models\Payment;
+use App\Models\Property;
 use App\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -286,6 +287,77 @@ class MpesaInvestigationService
     }
 
     /**
+     * The landlord's own acknowledgement that the tenant's payment actually
+     * arrived — follow-up review, decisions 1 & 2: this NEVER credits
+     * anything and NEVER touches `status` or resolves the transaction. It
+     * only records that the landlord said so, and hands off to admin, who
+     * alone can close this out via resolveAsSuccessful() once a real,
+     * independently-confirmed Payment/DepositPayment has been recorded
+     * through the existing manual-entry workflow.
+     */
+    public function recordLandlordReceivedPayment(MpesaTransaction $transaction, User $landlord): MpesaTransaction
+    {
+        $this->assertLandlordAccess($landlord, $transaction);
+
+        $locked = $this->recordLandlordResponse($transaction, $landlord, MpesaTransaction::LANDLORD_RESPONSE_RECEIVED);
+
+        $this->notifyLandlordResponse($locked, true, $landlord);
+
+        return $locked->fresh();
+    }
+
+    /**
+     * The landlord's own acknowledgement that the money never arrived —
+     * follow-up review, decision 2: this never itself cancels, fails, or
+     * otherwise changes the original transaction. It only tells admin an
+     * investigation is needed; the tenant stays blocked from retrying until
+     * admin resolves the transaction through the existing, evidence-based
+     * resolveAsFailed()/resolveAsCancelled() methods (which already notify
+     * the tenant once that happens).
+     */
+    public function recordLandlordDidNotReceivePayment(MpesaTransaction $transaction, User $landlord): MpesaTransaction
+    {
+        $this->assertLandlordAccess($landlord, $transaction);
+
+        $locked = $this->recordLandlordResponse($transaction, $landlord, MpesaTransaction::LANDLORD_RESPONSE_NOT_RECEIVED);
+
+        $this->notifyLandlordResponse($locked, false, $landlord);
+
+        return $locked->fresh();
+    }
+
+    private function recordLandlordResponse(MpesaTransaction $transaction, User $landlord, string $response): MpesaTransaction
+    {
+        return DB::transaction(function () use ($transaction, $landlord, $response) {
+            $locked = MpesaTransaction::where('id', $transaction->id)->lockForUpdate()->first();
+
+            if (! $locked) {
+                throw new InvalidArgumentException('Transaction not found.');
+            }
+
+            if ($locked->isFinished()) {
+                throw new InvalidArgumentException('This transaction has already been resolved — refresh and check its current status.');
+            }
+
+            // The idempotency guard that also prevents a duplicate
+            // notification: once answered, a resubmission (double-click,
+            // page reload, retry) is rejected outright rather than
+            // silently re-notifying everyone a second time.
+            if ($locked->landlordResponded()) {
+                throw new InvalidArgumentException('You have already responded to this request.');
+            }
+
+            $locked->update([
+                'landlord_response' => $response,
+                'landlord_response_at' => now(),
+                'landlord_response_by' => $landlord->id,
+            ]);
+
+            return $locked;
+        });
+    }
+
+    /**
      * Stays unresolved by design (clarification 2): status is never touched
      * here. Only investigation metadata is recorded, so the transaction
      * keeps blocking another payment attempt and remains eligible for a
@@ -496,7 +568,12 @@ class MpesaInvestigationService
                 'An M-Pesa Payment Needs Manual Verification',
                 "{$tenancy->tenant?->name} ({$tenancy->house->house_number})'s M-Pesa payment of KSh ".number_format((float) $transaction->amount, 2)." needs manual verification: {$notes}",
                 ['in_app', 'email'],
-                $tenancy,
+                // Phase 5a follow-up: the transaction itself, not the
+                // tenancy — this is what lets actionUrl() route the
+                // landlord straight to the dedicated investigation page for
+                // this exact transaction rather than the general tenancy
+                // overview.
+                $transaction,
             );
         }
 
@@ -509,6 +586,66 @@ class MpesaInvestigationService
                 ['in_app'],
                 $tenancy,
             );
+        }
+    }
+
+    private function notifyLandlordResponse(MpesaTransaction $transaction, bool $received, User $landlord): void
+    {
+        $tenancy = $transaction->tenancy()->with('tenant')->first();
+
+        if (! $tenancy) {
+            return;
+        }
+
+        $amount = number_format((float) $transaction->amount, 2);
+        $purposeLabel = $transaction->purpose === 'deposit' ? 'deposit' : 'rent';
+        $tenantName = $tenancy->tenant?->name ?? 'The tenant';
+
+        // Admin is told either way — this is the handoff point where the
+        // landlord's own knowledge becomes admin's job to verify and close
+        // out (decision 1: only admin's resolveAsSuccessful()/
+        // resolveAsFailed()/resolveAsCancelled() may actually touch status).
+        $adminBody = $received
+            ? "{$landlord->name} confirmed receiving {$tenantName}'s KSh {$amount} {$purposeLabel} payment. Verify it against a recorded Payment/Deposit Payment and resolve the original transaction via Incoming Payments."
+            : "{$landlord->name} says they did NOT receive {$tenantName}'s KSh {$amount} {$purposeLabel} payment. The original M-Pesa transaction needs investigation and safe resolution before the tenant can retry.";
+
+        foreach (User::role('admin')->get() as $admin) {
+            $this->notifications->notify(
+                $admin,
+                $received ? 'landlord_confirmed_mpesa_payment_received' : 'landlord_denies_mpesa_payment_received',
+                $received ? 'Landlord Confirmed a Stuck M-Pesa Payment Was Received' : 'Landlord Says a Stuck M-Pesa Payment Was Not Received',
+                $adminBody,
+                ['in_app', 'email'],
+                $transaction,
+            );
+        }
+
+        // Only the "received" case tells the tenant anything new — "not
+        // received" changes nothing yet; the tenant stays exactly as
+        // informed (still unresolved, still blocked) until admin actually
+        // resolves it, which already notifies them via notifyResolution().
+        // Wording deliberately distinguishes acknowledgement from an actual
+        // financial record (clarification 5) — never implies the payment
+        // has been recorded yet.
+        if ($received && $tenancy->tenant) {
+            $this->notifications->notify(
+                $tenancy->tenant,
+                'mpesa_landlord_confirmed_receipt',
+                'Your Landlord Confirmed Receiving Your Payment',
+                'Your landlord has confirmed receiving your payment. It is awaiting verification and recording. Please do not initiate another payment while this is being resolved.',
+                ['in_app'],
+                $tenancy,
+            );
+        }
+    }
+
+    /** Defence in depth beyond the route-level guard the new investigation page sits behind — never assumes a manager has unrestricted access to their landlord's entire portfolio. */
+    private function assertLandlordAccess(User $landlord, MpesaTransaction $transaction): void
+    {
+        $property = $transaction->tenancy?->house?->block?->property;
+
+        if (! $property || ! Property::accessibleBy($landlord)->whereKey($property->id)->exists()) {
+            throw new AuthorizationException('You do not have access to this payment.');
         }
     }
 

@@ -129,9 +129,38 @@ class AppNotification extends Model
             'due_day_change_requested' => $viewerIsLandlordOrManager && $this->related_type === DueDayChangeRequest::class && $this->related
                 ? route('manage.tenancies.show', $this->related->tenancy_id)
                 : null,
-            'contract_signed', 'tenant_paid_mpesa', 'tenant_registered', 'tenancy_change_request', 'renewal_request', 'mpesa_callback_missed', 'mpesa_callback_discrepancy' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
+            'contract_signed', 'tenant_paid_mpesa', 'tenant_registered', 'tenancy_change_request', 'renewal_request', 'mpesa_callback_discrepancy' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
                 ? route('manage.tenancies.show', $this->related_id)
                 : null,
+            // Sent to the landlord with the MpesaTransaction itself as
+            // $related (not a Tenancy, unlike the group above) — a landlord
+            // viewing either one goes to the dedicated per-transaction
+            // investigation page (Tenancies\MpesaInvestigation), which
+            // itself distinguishes a tenant-raised cancellation request from
+            // an automated no-answer escalation (see
+            // MpesaTransaction::investigationReason()) rather than treating
+            // them as the same event; an admin viewing the same notification
+            // (it also surfaces in the platform-wide admin feed, see
+            // scopeForLandlordContext()'s docblock) goes to the actual
+            // resolution tools (re-query, mark resolved/failed/cancelled)
+            // added in Phase 4 Finding 4.
+            'mpesa_cancellation_requested', 'mpesa_callback_missed' => match (true) {
+                $viewerIsAdmin => route('admin.payments.index'),
+                $viewerIsLandlordOrManager && $this->related_type === MpesaTransaction::class && $this->related
+                    => route('manage.mpesa-investigations.show', $this->related_id),
+                default => null,
+            },
+            // The landlord's own response to one of the two notifications
+            // above, relayed to admin — same destination as those, since
+            // it's the exact same transaction admin needs to act on.
+            'landlord_confirmed_mpesa_payment_received', 'landlord_denies_mpesa_payment_received' => $viewerIsAdmin
+                ? route('admin.payments.index')
+                : null,
+            // The tenant's own acknowledgement that their landlord confirmed
+            // receipt — not a resolution, so there's nothing to "view" on
+            // either /tenant/pay or /tenant/deposit/pay beyond what's
+            // already there; stays a plain, linkless notification.
+            'mpesa_landlord_confirmed_receipt' => null,
             'tenant_profile_updated' => $viewerIsLandlordOrManager && $this->related_type === Tenant::class
                 ? route('manage.tenants.show', $this->related_id)
                 : null,

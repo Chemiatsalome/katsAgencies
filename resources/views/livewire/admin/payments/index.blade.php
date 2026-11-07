@@ -97,6 +97,11 @@
                                     @if ($t->investigation_notes)
                                         <p class="text-xs text-brand-slate mt-1 max-w-xs">{{ $t->investigation_notes }}</p>
                                     @endif
+                                    @if ($t->landlordResponded())
+                                        <p class="text-xs mt-1 {{ $t->landlordConfirmedReceived() ? 'text-success' : 'text-danger' }}">
+                                            {{ $t->landlordResponseBy?->name ?? 'Landlord' }} said {{ $t->landlordConfirmedReceived() ? 'received' : 'not received' }} ({{ $t->landlord_response_at->diffForHumans() }})
+                                        </p>
+                                    @endif
 
                                     @if ($t->purpose !== 'sms_topup' && ! $t->isFinished())
                                         <div class="flex flex-wrap items-center gap-2 mt-2">

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AppNotification;
+use App\Models\MpesaTransaction;
 use App\Models\Tenancy;
 use App\Models\User;
 use App\Services\TenancyProvisioningService;
@@ -71,5 +72,61 @@ class NotificationActionUrlViewerScopingTest extends TestCase
         // at all) — same requirement applies.
         $admin = User::role('admin')->firstOrFail();
         $this->assertNull($notification->actionUrl($admin));
+    }
+
+    /**
+     * Regression for a live bug report: a tenant's "ask us to look into
+     * this" cancellation request notified the landlord, but
+     * 'mpesa_cancellation_requested' had no case in actionUrl() at all —
+     * the notification rendered with no link for anyone. related is the
+     * MpesaTransaction itself (not a Tenancy, unlike mpesa_callback_discrepancy),
+     * so this needs its own case deriving the tenancy via $this->related.
+     *
+     * Follow-up (landlord investigation workflow): a second live report
+     * showed the landlord's "View" link landing on the general tenancy
+     * overview with no indication of what to do — this now points at the
+     * dedicated per-transaction investigation page instead.
+     */
+    public function test_a_cancellation_requested_notification_links_the_landlord_to_the_investigation_page_and_the_admin_to_the_payments_page(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::active()
+            ->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))
+            ->firstOrFail();
+
+        $transaction = MpesaTransaction::create([
+            'tenancy_id' => $tenancy->id,
+            'initiated_by' => User::factory()->create()->id,
+            'phone' => '254712345678',
+            'amount' => 5000,
+            'purpose' => 'deposit',
+            'checkout_request_id' => 'checkout-notif-link-1',
+            'status' => 'pending',
+            'cancellation_requested_at' => now(),
+        ]);
+
+        $notification = AppNotification::create([
+            'notifiable_type' => $landlord->getMorphClass(),
+            'notifiable_id' => $landlord->id,
+            'channel' => 'in_app',
+            'event_type' => 'mpesa_cancellation_requested',
+            'title' => 'A Tenant Requested Help With a Stuck M-Pesa Payment',
+            'body' => 'A tenant asked us to look into an M-Pesa payment that never completed.',
+            'status' => 'sent',
+            'related_type' => $transaction->getMorphClass(),
+            'related_id' => $transaction->id,
+        ]);
+
+        $this->assertSame(route('manage.mpesa-investigations.show', $transaction->id), $notification->actionUrl($landlord));
+
+        $admin = User::role('admin')->firstOrFail();
+        $this->assertSame(route('admin.payments.index'), $notification->actionUrl($admin));
+
+        $tenantUser = app(TenancyProvisioningService::class)->createPortalAccount(
+            $tenancy->tenant, $tenancy->tenant->name, 'cancel-link-tenant@example.test', 'password'
+        );
+        $this->assertNull($notification->actionUrl($tenantUser));
     }
 }
