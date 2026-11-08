@@ -52,6 +52,10 @@ class Index extends Component
 
     public bool $platformConfigured = false;
 
+    // What Kats charges a landlord's SMS wallet per rent-reminder text sent
+    // — see SmsWalletService. Platform-wide, not per-landlord.
+    public string $sms_rate_per_message = '';
+
     public function mount(): void
     {
         // Rent and Notifications tabs were removed — both wrote to this
@@ -81,6 +85,8 @@ class Index extends Component
         $this->mpesa_callback_secret = (string) Setting::getEncrypted('mpesa_callback_secret', config('services.mpesa.callback_secret', ''));
 
         $this->platformConfigured = app(PaymentGatewayService::class)->isPlatformConfigured();
+
+        $this->sms_rate_per_message = (string) Setting::get('sms_rate_per_message', '1.00');
     }
 
     public function generateCallbackSecret(): void
@@ -98,6 +104,7 @@ class Index extends Component
             'mpesa_callback_url' => ['required', 'url', 'max:255'],
             'mpesa_passkey' => ['nullable', 'string', 'max:255'],
             'mpesa_callback_secret' => ['required', 'string', 'min:20', 'max:255'],
+            'sms_rate_per_message' => ['required', 'numeric', 'min:0'],
         ]);
 
         Setting::set('mpesa_env', $data['mpesa_env']);
@@ -105,6 +112,7 @@ class Index extends Component
         Setting::set('mpesa_shortcode', $data['mpesa_shortcode']);
         Setting::set('mpesa_callback_url', $data['mpesa_callback_url']);
         Setting::setEncrypted('mpesa_callback_secret', $data['mpesa_callback_secret']);
+        Setting::set('sms_rate_per_message', $data['sms_rate_per_message']);
 
         // Write-only fields — a blank submission means "keep the existing
         // one", same convention the landlord payout passkey field uses.

@@ -160,7 +160,10 @@
                     </div>
 
                     <div>
-                        <x-input-label for="mpesa_callback_url" value="Callback URL (public HTTPS base — no secret suffix)" />
+                        <x-input-label for="mpesa_callback_url" value="Callback URL" />
+                        <p class="text-xs text-brand-slate mb-1">
+                            Just the public HTTPS base — e.g. your ngrok URL plus <span class="font-mono">/mpesa/callback</span>. Do not paste the secret into this field; it's added automatically (see below). Nothing needs registering with Safaricom separately — this is sent fresh with every payment request.
+                        </p>
                         <x-text-input id="mpesa_callback_url" type="text" wire:model="mpesa_callback_url" class="mt-1 block w-full" placeholder="https://your-domain.com/mpesa/callback" />
                         <x-input-error :messages="$errors->get('mpesa_callback_url')" class="mt-1" />
                     </div>
@@ -168,7 +171,7 @@
                     <div>
                         <x-input-label for="mpesa_callback_secret" value="Callback Secret" />
                         <p class="text-xs text-brand-slate mb-1">
-                            Appended to the callback URL automatically — Daraja callbacks carry no signature of their own, so this is what stops a forged "payment succeeded" request. Register the full URL below with Safaricom, not the base URL above.
+                            Appended to the Callback URL above automatically — Daraja callbacks carry no signature of their own, so this is what stops a forged "payment succeeded" request.
                         </p>
                         <div class="flex gap-2">
                             <x-text-input id="mpesa_callback_secret" type="text" wire:model="mpesa_callback_secret" class="block w-full font-mono text-xs" />
@@ -176,8 +179,17 @@
                         </div>
                         <x-input-error :messages="$errors->get('mpesa_callback_secret')" class="mt-1" />
                         @if ($mpesa_callback_url && $mpesa_callback_secret)
-                            <p class="text-xs text-brand-slate mt-2 break-all">Full URL to register with Safaricom: <span class="font-mono">{{ rtrim($mpesa_callback_url, '/') }}/{{ $mpesa_callback_secret }}</span></p>
+                            <p class="text-xs text-brand-slate mt-2 break-all">For reference only — this is the full URL Safaricom will actually be sent (do not paste it into the field above): <span class="font-mono">{{ rtrim($mpesa_callback_url, '/') }}/{{ $mpesa_callback_secret }}</span></p>
                         @endif
+                    </div>
+
+                    <div>
+                        <x-input-label for="sms_rate_per_message" value="SMS Rate (KSh per message)" />
+                        <p class="text-xs text-brand-slate mb-1">
+                            What a landlord's SMS wallet is charged per rent-reminder text sent. SMS is an optional, self-serve add-on — a landlord tops up their own wallet via this same M-Pesa paybill; reminders just fall back to in-app/email when their balance runs out.
+                        </p>
+                        <x-text-input id="sms_rate_per_message" type="number" step="0.01" min="0" wire:model="sms_rate_per_message" class="block w-40" />
+                        <x-input-error :messages="$errors->get('sms_rate_per_message')" class="mt-1" />
                     </div>
 
                     <div class="flex items-center gap-3">

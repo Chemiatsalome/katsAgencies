@@ -129,14 +129,53 @@ class NotificationService
             return;
         }
 
+        $landlordId = $this->resolveBillableLandlordId($notifiable);
+
+        if ($landlordId !== null) {
+            $wallet = app(SmsWalletService::class);
+
+            // Cheap pre-check before even attempting a send — an empty
+            // wallet means SMS just silently stops (in-app/email, if also
+            // selected, are unaffected — each channel is its own
+            // AppNotification row via the loop in notify() above). The
+            // landlord sees their balance in Settings; the tenant is never
+            // told a text didn't arrive over a billing issue that isn't theirs.
+            if ($wallet->balance($landlordId) < $wallet->rate()) {
+                $notification->update(['status' => 'failed']);
+
+                return;
+            }
+        }
+
         // The title is dropped here on purpose — unlike email/in-app, an
         // SMS has no separate subject line, and prepending it would just
         // eat into the 160-character budget for no benefit.
         $sent = app(SmsService::class)->send($phone, $notification->body);
 
+        // Only debit for a message that actually went out — never charge
+        // for a failed/rejected send, so there's no refund case to handle.
+        if ($sent && $landlordId !== null) {
+            app(SmsWalletService::class)->debit($landlordId, app(SmsWalletService::class)->rate(), $notification);
+        }
+
         $notification->update($sent
             ? ['status' => 'sent', 'sent_at' => now()]
             : ['status' => 'failed']
         );
+    }
+
+    /**
+     * Which landlord's SMS wallet pays for this message — only a Tenant
+     * notifiable is billable today, since rent reminders/late-fee notices
+     * are the only sms-channel senders in the app. Anything else (e.g. a
+     * notification to a landlord/admin/manager themselves) isn't billed.
+     */
+    private function resolveBillableLandlordId(Model $notifiable): ?int
+    {
+        if ($notifiable instanceof Tenant) {
+            return $notifiable->currentTenancy()?->house?->block?->property?->landlord_id;
+        }
+
+        return null;
     }
 }

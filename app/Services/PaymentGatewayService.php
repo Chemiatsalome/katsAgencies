@@ -112,7 +112,15 @@ class PaymentGatewayService
     /**
      * The secret callback token (see MpesaCallbackController) is appended
      * here, automatically, rather than asking every admin to remember to
-     * include it in MPESA_CALLBACK_URL by hand.
+     * include it in MPESA_CALLBACK_URL by hand. The Payments settings page
+     * shows the composed URL purely as a reference (what Safaricom will
+     * actually be sent) — if an admin pastes that reference back into the
+     * base Callback URL field by mistake, the secret would otherwise get
+     * appended twice, producing a URL with no matching route
+     * (/mpesa/callback/{secret}/{secret} — a real incident, see
+     * project_sms_wallet_and_at_sandbox memory). Stripped defensively here
+     * so a bad save degrades to "still points at the right endpoint"
+     * rather than silently breaking every callback.
      */
     private function callbackUrl(): string
     {
@@ -128,7 +136,13 @@ class PaymentGatewayService
             throw new RuntimeException('The M-Pesa callback secret is not configured — the callback endpoint cannot be secured without it. Set it under Admin › Settings › Payments.');
         }
 
-        return rtrim($base, '/').'/'.$secret;
+        $base = rtrim((string) $base, '/');
+
+        if (str_ends_with($base, '/'.$secret)) {
+            $base = substr($base, 0, -strlen('/'.$secret));
+        }
+
+        return $base.'/'.$secret;
     }
 
     private function accessToken(): string
@@ -209,6 +223,50 @@ class PaymentGatewayService
             ? (string) LandlordSetting::getEncrypted($landlordId, 'mpesa_passkey')
             : (string) $this->platformEncryptedSetting('passkey');
 
+        return $this->performStkPush($shortcode, $passkey, $phone, $amount, $accountReference, $description);
+    }
+
+    /**
+     * For a payment that must always settle into Kats' own platform
+     * shortcode regardless of this landlord's chosen collection method —
+     * e.g. an SMS wallet top-up, which is the landlord paying Kats, never
+     * themselves. Deliberately skips isDirectlyConfigured() entirely,
+     * unlike initiateStkPush() above.
+     *
+     * @return array{MerchantRequestID:string,CheckoutRequestID:string,ResponseCode:string,ResponseDescription:string,CustomerMessage:string}
+     *
+     * @throws RuntimeException when Kats' own platform credentials aren't configured.
+     */
+    public function initiatePlatformStkPush(string $phone, float $amount, string $accountReference, string $description): array
+    {
+        if (! $this->isPlatformConfigured()) {
+            $this->alertAdminsOfMisconfiguration();
+
+            throw new RuntimeException('M-Pesa is not configured yet. Please try again later.');
+        }
+
+        return $this->performStkPush(
+            (string) $this->platformSetting('shortcode'),
+            (string) $this->platformEncryptedSetting('passkey'),
+            $phone,
+            $amount,
+            $accountReference,
+            $description,
+        );
+    }
+
+    /**
+     * The actual STK-push HTTP mechanics, shared by initiateStkPush()
+     * (landlord-or-platform shortcode) and initiatePlatformStkPush()
+     * (always platform) — whoever decided the destination shortcode/passkey
+     * is the only difference between those two callers.
+     *
+     * @return array{MerchantRequestID:string,CheckoutRequestID:string,ResponseCode:string,ResponseDescription:string,CustomerMessage:string}
+     *
+     * @throws RuntimeException when Safaricom rejects the request outright.
+     */
+    private function performStkPush(string $shortcode, string $passkey, string $phone, float $amount, string $accountReference, string $description): array
+    {
         $callbackUrl = $this->callbackUrl();
 
         $timestamp = now()->format('YmdHis');
@@ -223,8 +281,6 @@ class PaymentGatewayService
                 'TransactionType' => 'CustomerPayBillOnline',
                 'Amount' => (int) round($amount),
                 'PartyA' => $normalizedPhone,
-                // The destination shortcode decided above — the landlord's
-                // own when direct collection is configured, Kats' otherwise.
                 'PartyB' => $shortcode,
                 'PhoneNumber' => $normalizedPhone,
                 'CallBackURL' => $callbackUrl,
@@ -233,7 +289,7 @@ class PaymentGatewayService
             ]);
 
         if (! $response->successful()) {
-            Log::warning('M-Pesa STK push failed', ['landlord_id' => $landlordId, 'status' => $response->status(), 'body' => substr($response->body(), 0, 500)]);
+            Log::warning('M-Pesa STK push failed', ['shortcode' => $shortcode, 'status' => $response->status(), 'body' => substr($response->body(), 0, 500)]);
 
             throw new RuntimeException($response->json('errorMessage') ?? 'M-Pesa did not accept this payment request.');
         }
@@ -257,20 +313,28 @@ class PaymentGatewayService
             return null;
         }
 
-        $tenancy = $transaction->tenancy()->with('house.block.property')->first();
-        $landlordId = $tenancy?->house?->block?->property?->landlord_id;
+        // An SMS top-up always settles into the platform shortcode and has
+        // no tenancy to derive a landlord from — it carries its own
+        // landlord_id instead (see SmsWalletService::initiateTopUp()).
+        if ($transaction->purpose === 'sms_topup') {
+            $shortcode = (string) $this->platformSetting('shortcode');
+            $passkey = (string) $this->platformEncryptedSetting('passkey');
+        } else {
+            $tenancy = $transaction->tenancy()->with('house.block.property')->first();
+            $landlordId = $tenancy?->house?->block?->property?->landlord_id;
 
-        if (! $landlordId) {
-            return null;
+            if (! $landlordId) {
+                return null;
+            }
+
+            $direct = $this->isDirectlyConfigured($landlordId);
+            $shortcode = $direct
+                ? (string) LandlordSetting::get($landlordId, 'payout_shortcode')
+                : (string) $this->platformSetting('shortcode');
+            $passkey = $direct
+                ? (string) LandlordSetting::getEncrypted($landlordId, 'mpesa_passkey')
+                : (string) $this->platformEncryptedSetting('passkey');
         }
-
-        $direct = $this->isDirectlyConfigured($landlordId);
-        $shortcode = $direct
-            ? (string) LandlordSetting::get($landlordId, 'payout_shortcode')
-            : (string) $this->platformSetting('shortcode');
-        $passkey = $direct
-            ? (string) LandlordSetting::getEncrypted($landlordId, 'mpesa_passkey')
-            : (string) $this->platformEncryptedSetting('passkey');
 
         if (! $shortcode || ! $passkey) {
             return null;
