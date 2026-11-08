@@ -8,9 +8,15 @@ use App\Livewire\Admin\Settings\Index as AdminSettingsIndex;
 use App\Livewire\Admin\SmsWallets\Index as AdminSmsWalletsIndex;
 use App\Livewire\Landlord\SmsWallet as SmsWalletPage;
 use App\Models\AppNotification;
+use App\Models\Block;
+use App\Models\House;
+use App\Models\Manager;
 use App\Models\MpesaTransaction;
+use App\Models\Property;
+use App\Models\RentCharge;
 use App\Models\SmsWalletEntry;
 use App\Models\Tenancy;
+use App\Models\Tenant;
 use App\Models\User;
 use App\Services\NotificationService;
 use App\Services\PaymentGatewayService;
@@ -456,5 +462,277 @@ class SmsWalletTest extends TestCase
         // Filtering by the correct landlord must still show it.
         $component->set('landlordId', $landlord->id)
             ->assertSee('SMS Wallet Top-up');
+    }
+
+    // --- G-2: recipient resolution and fail-closed billing ------------------------------
+
+    /** A fresh landlord + property + house + tenancy, fully self-contained — never relies on seeded data, so two of these under two different landlords can be built per test. */
+    private function tenancyForNewLandlord(string $houseSuffix, string $status = 'active'): Tenancy
+    {
+        $landlord = User::factory()->create(['status' => 'active']);
+        $landlord->assignRole('landlord');
+        $property = Property::create(['landlord_id' => $landlord->id, 'name' => "Property {$houseSuffix}", 'type' => 'apartment', 'status' => 'active']);
+        $block = Block::create(['property_id' => $property->id, 'name' => "Block {$houseSuffix}"]);
+        $house = House::create([
+            'block_id' => $block->id, 'house_number' => "H-{$houseSuffix}",
+            'monthly_rent' => 15000, 'deposit_amount' => 15000, 'status' => 'occupied',
+        ]);
+        $tenant = Tenant::create(['name' => "Tenant {$houseSuffix}", 'phone' => '07'.random_int(10000000, 99999999), 'payment_due_day' => 1]);
+
+        return Tenancy::create([
+            'tenant_id' => $tenant->id, 'house_id' => $house->id,
+            'move_in_date' => now()->subMonths(6)->format('Y-m-d'),
+            'move_out_date' => $status !== 'active' ? now()->subMonth()->format('Y-m-d') : null,
+            'monthly_rent' => 15000, 'deposit_required' => 15000, 'deposit_paid' => 15000,
+            'status' => $status,
+        ]);
+    }
+
+    private function fakeSuccessfulSms(): void
+    {
+        config(['services.africastalking.api_key' => 'fake-at-key']);
+        Http::fake([
+            '*africastalking.com*' => Http::response(['SMSMessageData' => ['Recipients' => [['status' => 'Success']]]]),
+        ]);
+    }
+
+    public function test_tenant_with_a_related_tenancy_charges_that_tenancys_landlord(): void
+    {
+        $this->seed();
+        $tenancy = $this->tenancyForNewLandlord('rel-1');
+        $landlordId = $tenancy->house->block->property->landlord_id;
+        SmsWalletEntry::create(['landlord_id' => $landlordId, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        $this->fakeSuccessfulSms();
+
+        $charge = RentCharge::create([
+            'tenancy_id' => $tenancy->id, 'period_year' => now()->year, 'period_month' => now()->month,
+            'due_date' => now()->format('Y-m-d'), 'amount_expected' => 15000, 'amount_paid' => 0, 'status' => 'overdue',
+        ]);
+
+        app(NotificationService::class)->notify(
+            $tenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms'], $charge,
+        );
+
+        $this->assertEquals(8.0, app(SmsWalletService::class)->balance($landlordId));
+        $this->assertEquals('sent', AppNotification::where('channel', 'sms')->latest()->first()->status);
+    }
+
+    public function test_tenant_without_a_related_tenancy_falls_back_to_current_tenancy(): void
+    {
+        $this->seed();
+        $tenancy = $this->tenancyForNewLandlord('fallback-1');
+        $landlordId = $tenancy->house->block->property->landlord_id;
+        SmsWalletEntry::create(['landlord_id' => $landlordId, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        $this->fakeSuccessfulSms();
+
+        // $related is a Message, which has no tenancy() relation at all —
+        // the resolution must fall back to currentTenancy(), not fail.
+        $message = \App\Models\Message::create([
+            'sender_id' => $landlordId, 'tenant_id' => $tenancy->tenant_id, 'scope' => 'tenant',
+            'subject' => 'Unrelated', 'body' => 'Unrelated.',
+        ]);
+
+        app(NotificationService::class)->notify(
+            $tenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms'], $message,
+        );
+
+        $this->assertEquals(8.0, app(SmsWalletService::class)->balance($landlordId));
+        $this->assertEquals('sent', AppNotification::where('channel', 'sms')->latest()->first()->status);
+    }
+
+    public function test_tenant_with_no_resolvable_tenancy_is_rejected_without_sending(): void
+    {
+        $tenant = Tenant::create(['name' => 'Homeless Tenant', 'phone' => '0700111222', 'payment_due_day' => 1]);
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify(
+            $tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms'],
+        );
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'africastalking.com'));
+        $this->assertEquals('failed', AppNotification::where('channel', 'sms')->latest()->first()->status);
+        $this->assertDatabaseCount('sms_wallet_entries', 0);
+    }
+
+    public function test_related_tenancys_landlord_is_charged_even_when_the_current_tenancy_belongs_to_a_different_landlord(): void
+    {
+        $this->seed();
+        $oldTenancy = $this->tenancyForNewLandlord('old-landlord', status: 'completed');
+        $oldLandlordId = $oldTenancy->house->block->property->landlord_id;
+
+        // Same tenant, a newer tenancy at a different landlord's property —
+        // this is now their currentTenancy(), but must NOT be billed here.
+        $newTenancy = Tenancy::create([
+            'tenant_id' => $oldTenancy->tenant_id,
+            'house_id' => $this->tenancyForNewLandlord('new-landlord')->house_id,
+            'move_in_date' => now()->subDays(5)->format('Y-m-d'),
+            'monthly_rent' => 15000, 'deposit_required' => 15000, 'deposit_paid' => 15000,
+            'status' => 'active',
+        ]);
+        $newLandlordId = $newTenancy->house->block->property->landlord_id;
+        $this->assertNotEquals($oldLandlordId, $newLandlordId);
+
+        SmsWalletEntry::create(['landlord_id' => $oldLandlordId, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        $this->fakeSuccessfulSms();
+
+        $charge = RentCharge::create([
+            'tenancy_id' => $oldTenancy->id, 'period_year' => now()->year, 'period_month' => now()->month,
+            'due_date' => now()->format('Y-m-d'), 'amount_expected' => 15000, 'amount_paid' => 0, 'status' => 'overdue',
+        ]);
+
+        app(NotificationService::class)->notify(
+            $oldTenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms'], $charge,
+        );
+
+        $this->assertEquals(8.0, app(SmsWalletService::class)->balance($oldLandlordId), "The old tenancy's own landlord must be charged.");
+        $this->assertEquals(0.0, app(SmsWalletService::class)->balance($newLandlordId), "The current-but-unrelated landlord must not be charged.");
+    }
+
+    public function test_landlord_recipient_charges_their_own_wallet(): void
+    {
+        $this->seed();
+        $landlord = User::factory()->create(['status' => 'active', 'phone' => '0700333444']);
+        $landlord->assignRole('landlord');
+        SmsWalletEntry::create(['landlord_id' => $landlord->id, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify($landlord, 'sms_wallet_topped_up', 'Test', 'Body', ['sms']);
+
+        $this->assertEquals(8.0, app(SmsWalletService::class)->balance($landlord->id));
+        $this->assertEquals('sent', AppNotification::where('channel', 'sms')->latest()->first()->status);
+    }
+
+    public function test_manager_recipient_charges_the_delegating_landlords_wallet(): void
+    {
+        $this->seed();
+        $landlord = User::factory()->create(['status' => 'active']);
+        $landlord->assignRole('landlord');
+        $managerUser = User::factory()->create(['status' => 'active', 'phone' => '0700555666']);
+        $managerUser->assignRole('manager');
+        Manager::create([
+            'landlord_id' => $landlord->id, 'user_id' => $managerUser->id, 'name' => $managerUser->name,
+            'phone' => '0700555666', 'email' => $managerUser->email, 'all_properties' => true, 'status' => 'active',
+            'token' => Manager::generateToken(), 'expires_at' => now()->addDays(7), 'activated_at' => now(),
+        ]);
+        SmsWalletEntry::create(['landlord_id' => $landlord->id, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify($managerUser, 'sms_wallet_topped_up', 'Test', 'Body', ['sms']);
+
+        $this->assertEquals(8.0, app(SmsWalletService::class)->balance($landlord->id), "The delegating landlord's wallet must be charged, not the manager's.");
+        $this->assertEquals('sent', AppNotification::where('channel', 'sms')->latest()->first()->status);
+    }
+
+    public function test_admin_recipient_is_rejected_without_sending(): void
+    {
+        $this->seed();
+        $admin = User::role('admin')->firstOrFail();
+        $admin->update(['phone' => '0700777888']);
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify($admin, 'sms_wallet_topped_up', 'Test', 'Body', ['sms']);
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'africastalking.com'));
+        $this->assertEquals('failed', AppNotification::where('channel', 'sms')->latest()->first()->status);
+        $this->assertDatabaseCount('sms_wallet_entries', 0);
+    }
+
+    public function test_other_unresolvable_recipient_type_is_rejected_without_sending(): void
+    {
+        $this->seed();
+        // Neither a Tenant nor a User — exercises the generic fallback,
+        // not just the two special-cased notifiable types.
+        $notifiable = Manager::create([
+            'landlord_id' => User::role('landlord')->firstOrFail()->id, 'name' => 'Bare Manager Record',
+            'phone' => '0700999000', 'email' => 'bare-manager-record@example.test', 'all_properties' => true, 'status' => 'active',
+            'token' => Manager::generateToken(), 'expires_at' => now()->addDays(7),
+        ]);
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify($notifiable, 'sms_wallet_topped_up', 'Test', 'Body', ['sms']);
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'africastalking.com'));
+        $this->assertEquals('failed', AppNotification::where('channel', 'sms')->latest()->first()->status);
+        $this->assertDatabaseCount('sms_wallet_entries', 0);
+    }
+
+    public function test_insufficient_balance_rejects_without_sending(): void
+    {
+        $this->seed();
+        $tenancy = $this->tenancyForNewLandlord('insufficient-1');
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+        // No wallet entries at all — balance is 0, below the rate.
+        $this->fakeSuccessfulSms();
+
+        app(NotificationService::class)->notify($tenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms']);
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'africastalking.com'));
+        $this->assertEquals('failed', AppNotification::where('channel', 'sms')->latest()->first()->status);
+        $this->assertDatabaseCount('sms_wallet_entries', 0);
+    }
+
+    public function test_failed_sms_delivery_never_debits_the_wallet(): void
+    {
+        $this->seed();
+        $tenancy = $this->tenancyForNewLandlord('send-fail-1');
+        $landlordId = $tenancy->house->block->property->landlord_id;
+        SmsWalletEntry::create(['landlord_id' => $landlordId, 'type' => 'credit', 'amount' => 10]);
+        \App\Models\Setting::set('sms_rate_per_message', '2.00');
+
+        // No api_key configured at all — SmsService::send() fails before
+        // ever making an HTTP call, deterministically simulating a
+        // provider-side delivery failure without needing Http::fake.
+        config(['services.africastalking.api_key' => null]);
+
+        app(NotificationService::class)->notify($tenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms']);
+
+        $this->assertEquals(10.0, app(SmsWalletService::class)->balance($landlordId), 'Balance must be untouched — nothing was actually sent.');
+        $this->assertEquals('failed', AppNotification::where('channel', 'sms')->latest()->first()->status);
+        $this->assertDatabaseCount('sms_wallet_entries', 1); // only the original credit
+    }
+
+    /**
+     * The one scenario that genuinely needs a mock rather than real wallet
+     * state: debit() refusing after the SMS has already, successfully,
+     * irreversibly gone out. Both SmsService::send() (via Http::fake) and
+     * SmsWalletService::debit() (via a full mock) are controlled
+     * deterministically, since reproducing the real race condition itself
+     * isn't practical in a synchronous test.
+     */
+    public function test_successful_send_with_failed_debit_records_a_discrepancy_without_resending(): void
+    {
+        $this->seed();
+        $tenancy = $this->tenancyForNewLandlord('race-1');
+        $landlordId = $tenancy->house->block->property->landlord_id;
+        $this->fakeSuccessfulSms();
+
+        $this->mock(SmsWalletService::class, function ($mock) use ($landlordId) {
+            $mock->shouldReceive('rate')->andReturn(2.0);
+            $mock->shouldReceive('balance')->with($landlordId)->andReturn(10.0); // passes the pre-check
+            $mock->shouldReceive('debit')->once()->with($landlordId, 2.0, \Mockery::type(AppNotification::class))->andReturn(false);
+            $mock->shouldReceive('recordUnbilledSend')->once()->with($landlordId, 2.0, \Mockery::type(AppNotification::class));
+        });
+
+        app(NotificationService::class)->notify($tenancy->tenant, 'rent_due_soon_test', 'Rent Reminder', 'Body', ['sms']);
+
+        // Exactly one send — the discrepancy must never trigger a resend.
+        Http::assertSentCount(1);
+
+        $notification = AppNotification::where('channel', 'sms')->latest()->first();
+        $this->assertEquals('sent', $notification->status, 'The SMS genuinely went out — status reflects delivery, not billing outcome.');
+        $this->assertNotNull($notification->sent_at, 'The SMS genuinely went out — sent_at must reflect that regardless of the billing outcome.');
+
+        // The forced debit entry itself is verified above via the mock's
+        // own ->once()->with(...) expectation on recordUnbilledSend() —
+        // SmsWalletService is fully mocked here, so no real SmsWalletEntry
+        // row is written in this test; the happy path (real, unmocked
+        // debit() writing a real SmsWalletEntry) is already covered by
+        // test_sms_reminder_debits_the_wallet_only_after_a_successful_send
+        // above.
     }
 }

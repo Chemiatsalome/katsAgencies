@@ -132,4 +132,25 @@ class SmsWalletService
             return true;
         });
     }
+
+    /**
+     * G-2: called only when an SMS has already been sent — irreversibly,
+     * and already costing Kats real money — but debit() refused because a
+     * concurrent debit exhausted the balance between NotificationService's
+     * earlier pre-check and the debit() call. The cost is real regardless,
+     * so it's recorded unconditionally here, which may take the landlord's
+     * balance negative — the honest, auditable reflection of a message
+     * they genuinely owe for, not a bug to paper over. Never call this for
+     * any other reason; debit() itself remains the only normal path.
+     */
+    public function recordUnbilledSend(int $landlordId, float $amount, AppNotification $notification): void
+    {
+        SmsWalletEntry::create([
+            'landlord_id' => $landlordId,
+            'type' => 'debit',
+            'amount' => $amount,
+            'app_notification_id' => $notification->id,
+            'description' => 'SMS sent but balance was already exhausted by a concurrent debit — billing discrepancy, reconcile manually.',
+        ]);
+    }
 }

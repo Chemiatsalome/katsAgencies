@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Mail\GenericNotificationMail;
 use App\Models\AppNotification;
+use App\Models\Tenancy;
 use App\Models\Tenant;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -119,6 +121,14 @@ class NotificationService
         return $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
     }
 
+    /**
+     * G-2: fails closed at every step — SmsService::send() is never
+     * reached unless a real, billable landlord with a sufficient balance
+     * has already been established. The previous version only enforced
+     * the balance check when a landlord happened to resolve, which meant
+     * any notifiable that resolved to null (a User, or a Tenant with no
+     * resolvable tenancy) got a free, unbilled send instead of a refusal.
+     */
     private function deliverSms(AppNotification $notification, Model $notifiable): void
     {
         $phone = $notifiable->phone ?? null;
@@ -129,22 +139,27 @@ class NotificationService
             return;
         }
 
-        $landlordId = $this->resolveBillableLandlordId($notifiable);
+        $landlordId = $this->resolveBillableLandlordId($notifiable, $notification->related);
 
-        if ($landlordId !== null) {
-            $wallet = app(SmsWalletService::class);
+        if ($landlordId === null) {
+            $notification->update(['status' => 'failed']);
 
-            // Cheap pre-check before even attempting a send — an empty
-            // wallet means SMS just silently stops (in-app/email, if also
-            // selected, are unaffected — each channel is its own
-            // AppNotification row via the loop in notify() above). The
-            // landlord sees their balance in Settings; the tenant is never
-            // told a text didn't arrive over a billing issue that isn't theirs.
-            if ($wallet->balance($landlordId) < $wallet->rate()) {
-                $notification->update(['status' => 'failed']);
+            return;
+        }
 
-                return;
-            }
+        $wallet = app(SmsWalletService::class);
+        $rate = $wallet->rate();
+
+        // Cheap pre-check before even attempting a send — an empty wallet
+        // means SMS just silently stops (in-app/email, if also selected,
+        // are unaffected — each channel is its own AppNotification row via
+        // the loop in notify() above). The landlord sees their balance in
+        // Settings; the tenant is never told a text didn't arrive over a
+        // billing issue that isn't theirs.
+        if ($wallet->balance($landlordId) < $rate) {
+            $notification->update(['status' => 'failed']);
+
+            return;
         }
 
         // The title is dropped here on purpose — unlike email/in-app, an
@@ -152,30 +167,87 @@ class NotificationService
         // eat into the 160-character budget for no benefit.
         $sent = app(SmsService::class)->send($phone, $notification->body);
 
-        // Only debit for a message that actually went out — never charge
-        // for a failed/rejected send, so there's no refund case to handle.
-        if ($sent && $landlordId !== null) {
-            app(SmsWalletService::class)->debit($landlordId, app(SmsWalletService::class)->rate(), $notification);
+        if (! $sent) {
+            $notification->update(['status' => 'failed']);
+
+            return;
         }
 
-        $notification->update($sent
-            ? ['status' => 'sent', 'sent_at' => now()]
-            : ['status' => 'failed']
-        );
+        // debit() re-checks the balance under a row lock — the cheap check
+        // above is only a pre-filter to avoid attempting a send we already
+        // know can't be billed; a concurrent debit between that check and
+        // this one can still legitimately exhaust the balance by now.
+        if ($wallet->debit($landlordId, $rate, $notification)) {
+            $notification->update(['status' => 'sent', 'sent_at' => now()]);
+
+            return;
+        }
+
+        // The SMS already went out, irreversibly, and already cost Kats
+        // real money — never re-send it, and never represent it as
+        // undelivered just because billing couldn't keep up. Status stays
+        // 'sent' (it genuinely was) rather than overloading 'delivered',
+        // which is reserved for a real future carrier delivery-receipt
+        // feature, not a billing concept. The forced wallet entry is the
+        // auditable record of the discrepancy; it may take the landlord's
+        // balance negative, which is the honest, reconcilable reflection
+        // of a cost already genuinely incurred, not a bug to be hidden.
+        $wallet->recordUnbilledSend($landlordId, $rate, $notification);
+        $notification->update(['status' => 'sent', 'sent_at' => now()]);
     }
 
     /**
-     * Which landlord's SMS wallet pays for this message — only a Tenant
-     * notifiable is billable today, since rent reminders/late-fee notices
-     * are the only sms-channel senders in the app. Anything else (e.g. a
-     * notification to a landlord/admin/manager themselves) isn't billed.
+     * Which landlord's SMS wallet pays for this message.
+     *
+     * Tenant: the tenancy this notification is actually about — via
+     * $related, when it safely identifies one that genuinely belongs to
+     * this same tenant — takes priority over the tenant's current
+     * tenancy. A reminder about a tenancy that's since ended, or that
+     * differs from whichever one happens to be active right now, must
+     * still bill the landlord it was actually about; falling through to
+     * an unrelated (or absent) current tenancy would silently bypass
+     * billing or charge the wrong landlord. $related belonging to a
+     * different tenant entirely is never trusted, to avoid inventing an
+     * association this notification was never about.
+     *
+     * Landlord/manager User: User::landlordId() already resolves exactly
+     * this — themselves, or their delegating landlord.
+     *
+     * Admin, any other User landlordId() can't resolve, or any other
+     * notifiable type entirely: unbillable, by design — never invented.
      */
-    private function resolveBillableLandlordId(Model $notifiable): ?int
+    private function resolveBillableLandlordId(Model $notifiable, ?Model $related): ?int
     {
         if ($notifiable instanceof Tenant) {
-            return $notifiable->currentTenancy()?->house?->block?->property?->landlord_id;
+            $tenancy = $this->resolveRelatedTenancy($related, $notifiable) ?? $notifiable->currentTenancy();
+
+            return $tenancy?->house?->block?->property?->landlord_id;
+        }
+
+        if ($notifiable instanceof User) {
+            return $notifiable->landlordId();
         }
 
         return null;
+    }
+
+    /**
+     * $related can be practically any model across the ~80 notify() call
+     * sites in the app (Message, Complaint, DepositDeduction, and so on) —
+     * only a Tenancy itself, or something with its own tenancy() relation
+     * (e.g. RentCharge, the only kind sms-channel callers currently pass),
+     * is ever treated as identifying one; anything else, or a tenancy
+     * that resolves but belongs to a different tenant, is ignored rather
+     * than guessed at.
+     */
+    private function resolveRelatedTenancy(?Model $related, Tenant $tenant): ?Tenancy
+    {
+        $tenancy = match (true) {
+            $related instanceof Tenancy => $related,
+            $related !== null && method_exists($related, 'tenancy') => $related->tenancy,
+            default => null,
+        };
+
+        return $tenancy instanceof Tenancy && $tenancy->tenant_id === $tenant->id ? $tenancy : null;
     }
 }
