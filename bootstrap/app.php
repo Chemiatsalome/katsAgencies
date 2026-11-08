@@ -25,6 +25,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // out whether their rent payment went through shouldn't wait a day.
         $schedule->command('mpesa:reconcile-pending')->everyFiveMinutes();
 
+        // G-1A: no provider-side delivery confirmation beyond the
+        // synchronous response, so stale claims and resumable billing need
+        // a periodic sweep rather than relying on anything to retry itself.
+        $schedule->command('notifications:reconcile-sms')->everyFifteenMinutes();
+
         $schedule->command('notifications:rent-reminders')->dailyAt('07:00');
         $schedule->command('notifications:contract-expiry')->dailyAt('07:15');
         $schedule->command('notifications:renewal-reminders')->dailyAt('07:30');

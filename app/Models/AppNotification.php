@@ -5,21 +5,64 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Facades\Auth;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 #[Fillable([
     'notifiable_type', 'notifiable_id', 'channel', 'event_type', 'title', 'body',
     'status', 'related_type', 'related_id', 'sent_at', 'read_at',
+    'delivery_status', 'billing_status', 'submission_token', 'submission_started_at', 'submission_attempt',
+    'reconciliation_note', 'reconciled_at', 'reconciled_by',
 ])]
 class AppNotification extends Model
 {
+    use LogsActivity;
+
     protected function casts(): array
     {
         return [
             'sent_at' => 'datetime',
             'read_at' => 'datetime',
+            'submission_started_at' => 'datetime',
+            'reconciled_at' => 'datetime',
         ];
+    }
+
+    public function reconciledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reconciled_by');
+    }
+
+    /**
+     * G-1A: an admin's manual reconciliation of a `submission_unknown`
+     * notification is the one sms-related change on this model worth a
+     * durable, queryable audit trail — every other field already has its
+     * own observable effect (a wallet entry, a visible status), so only
+     * these are logged, matching DepositDeduction's own narrow logOnly().
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->logOnly(['delivery_status', 'billing_status', 'reconciliation_note', 'reconciled_by'])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
+    }
+
+    /**
+     * G-1A: every sms-channel row genuinely stuck and needing a human —
+     * either the provider's outcome was never confirmed, or it was
+     * confirmed sent but billing couldn't be resolved automatically. Used
+     * by ReconcileSmsSubmissions and the admin SMS wallets page; never
+     * matches an in_app/email row, since those never populate billing_status.
+     */
+    public function scopeNeedsSmsReconciliation(Builder $query): Builder
+    {
+        return $query->where('channel', 'sms')
+            ->where(fn ($q) => $q->where('delivery_status', 'submission_unknown')
+                ->orWhere('billing_status', 'reconciliation_required'));
     }
 
     public function notifiable(): MorphTo

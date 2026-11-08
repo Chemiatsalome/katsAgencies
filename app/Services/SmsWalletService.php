@@ -142,6 +142,11 @@ class SmsWalletService
      * balance negative — the honest, auditable reflection of a message
      * they genuinely owe for, not a bug to paper over. Never call this for
      * any other reason; debit() itself remains the only normal path.
+     *
+     * Guarded by the same `(app_notification_id, type)` unique constraint
+     * debit() relies on (see settleBilling()) — a second call for the same
+     * notification raises a database integrity exception rather than
+     * silently recording the discrepancy twice.
      */
     public function recordUnbilledSend(int $landlordId, float $amount, AppNotification $notification): void
     {
@@ -152,5 +157,49 @@ class SmsWalletService
             'app_notification_id' => $notification->id,
             'description' => 'SMS sent but balance was already exhausted by a concurrent debit — billing discrepancy, reconcile manually.',
         ]);
+    }
+
+    /**
+     * G-1A: the only path that ever bills a notification already confirmed
+     * sent — called both right after a fresh successful send and, later,
+     * to resume billing for one left at billing_status='pending' by an
+     * earlier interruption (NotificationService::resume()). The wallet
+     * debit (or, on failure, the forced discrepancy entry) and this
+     * notification's billing_status both commit as one transaction: debit()
+     * opens its own transaction internally, which — nested here under
+     * MySQL, which supports savepoints — only actually commits when this
+     * outer transaction does, so a crash between "entry written" and
+     * "billing_status updated" cannot happen; either both land or neither
+     * does. The unique constraint on sms_wallet_entries(app_notification_id,
+     * type) is what actually enforces "at most one debit per notification"
+     * at the database level — this method is what keeps that constraint
+     * from ever being hit on the normal path (a second call here only
+     * happens if billing_status was left at 'pending' by a genuine prior
+     * interruption, never as a routine retry).
+     */
+    public function settleBilling(int $landlordId, float $amount, AppNotification $notification): void
+    {
+        DB::transaction(function () use ($landlordId, $amount, $notification) {
+            // Row-locked re-check: two concurrent settleBilling() calls for
+            // the same notification (e.g. a reconciliation resume() racing
+            // the original call) must never both attempt to bill it. The
+            // lock serializes them against each other; whichever arrives
+            // second sees billing_status already resolved and does nothing
+            // — the same kind of guard debit() already applies to the
+            // landlord's own row, applied here at the notification level.
+            $current = AppNotification::where('id', $notification->id)->lockForUpdate()->first();
+
+            if (! $current || $current->billing_status !== 'pending') {
+                return;
+            }
+
+            $billed = $this->debit($landlordId, $amount, $notification);
+
+            if (! $billed) {
+                $this->recordUnbilledSend($landlordId, $amount, $notification);
+            }
+
+            $current->update(['billing_status' => $billed ? 'charged' : 'reconciliation_required']);
+        });
     }
 }
