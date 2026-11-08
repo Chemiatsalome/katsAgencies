@@ -7,6 +7,9 @@
             @if (session('status'))
                 <div class="rounded-md bg-teal/10 border border-teal/30 text-teal px-4 py-2 text-sm">{{ session('status') }}</div>
             @endif
+            @if (session('error'))
+                <div class="rounded-md bg-red-50 border border-red-200 text-danger px-4 py-2 text-sm">{{ session('error') }}</div>
+            @endif
 
             {{-- Not in the header slot above — Livewire's reactive wire:id
                  boundary only wraps the layout's main $slot, not $header, so a
@@ -252,8 +255,19 @@
                                 <tr class="hover:bg-gray-50">
                                     <td class="px-5 py-2.5 font-medium text-charcoal">
                                         {{ $task->title }}
-                                        @if ($task->deposit_deduction_id)
-                                            <span class="block text-[11px] text-teal font-normal">Deducted from tenant deposit</span>
+                                        @if ($task->deposit_deduction_id && $task->depositDeduction)
+                                            @if ($task->depositDeduction->isVoided())
+                                                <span class="block text-[11px] text-brand-slate font-normal">Deduction voided</span>
+                                            @elseif ($task->depositDeduction->isDisputePending())
+                                                <span class="block text-[11px] text-danger font-normal">Deduction disputed</span>
+                                            @elseif ($task->depositDeduction->disputed_at)
+                                                {{-- Dispute resolved in the landlord's favour — counts against the held balance just like a plain acknowledgement. --}}
+                                                <span class="block text-[11px] text-teal font-normal">Deducted from tenant deposit (upheld after dispute)</span>
+                                            @elseif ($task->depositDeduction->isAwaitingTenantResponse())
+                                                <span class="block text-[11px] text-warning font-normal">Awaiting tenant response</span>
+                                            @elseif ($task->depositDeduction->isAcknowledged())
+                                                <span class="block text-[11px] text-teal font-normal">Deducted from tenant deposit</span>
+                                            @endif
                                         @elseif ($task->status === 'completed' && $task->complaint_id && ! $task->complaint->tenant_confirmed_at)
                                             <span class="block text-[11px] text-warning font-normal">Awaiting tenant confirmation</span>
                                         @endif
@@ -488,25 +502,73 @@
                             <p class="text-xs text-brand-slate mt-1">This will be recorded automatically as a property expense.</p>
                         </div>
 
-                        @if ($completingTaskTenancy)
-                            <div class="border-t border-brand-border pt-3">
-                                <label class="flex items-start gap-2 text-sm text-charcoal">
-                                    <input type="checkbox" wire:model="complete_deduct_from_deposit" class="mt-0.5 rounded border-brand-border">
-                                    <span>Tenant is responsible, deduct this cost from {{ $completingTaskTenancy->tenant->name }}'s security deposit.</span>
+                        <div class="border-t border-brand-border pt-3">
+                            <x-input-label value="Who should bear this cost?" />
+                            <div class="mt-1 flex gap-4 text-sm">
+                                <label class="flex items-center gap-1.5">
+                                    <input type="radio" wire:model.live="complete_cost_responsibility" value="landlord" class="border-brand-border">
+                                    Landlord
                                 </label>
-                                @if ($complete_deduct_from_deposit)
-                                    <p class="text-xs text-brand-slate mt-2">
-                                        Currently held: KSh {{ number_format($completingTaskTenancy->depositHeldBalance(), 2) }}.
-                                        Only use this when the damage is genuinely the tenant's responsibility, not normal wear and tear.
-                                    </p>
-                                    <div class="mt-2">
+                                <label class="flex items-center gap-1.5 {{ $completingTaskComplaintLinked ? 'opacity-50' : '' }}">
+                                    <input type="radio" wire:model.live="complete_cost_responsibility" value="tenant" class="border-brand-border" {{ $completingTaskComplaintLinked ? 'disabled' : '' }}>
+                                    Tenant — deduct from security deposit
+                                </label>
+                            </div>
+                            @if ($completingTaskComplaintLinked)
+                                <p class="text-xs text-brand-slate mt-1">
+                                    Available once the tenant confirms this fix — from the Work Orders list afterward, not here.
+                                </p>
+                            @endif
+
+                            @if ($complete_cost_responsibility === 'tenant' && ! $completingTaskComplaintLinked)
+                                <div class="mt-3 space-y-3">
+                                    <div>
+                                        <x-input-label for="complete_liability_tenancy_id" value="Tenant liable" />
+                                        <select id="complete_liability_tenancy_id" wire:model.live="complete_liability_tenancy_id" class="mt-1 block w-full rounded-md border-brand-border text-sm">
+                                            <option value="">Select a tenancy…</option>
+                                            @foreach ($completingTaskCandidateTenancies as $t)
+                                                <option value="{{ $t->id }}">{{ $t->tenant->name }} ({{ $t->move_in_date->format('M Y') }}{{ $t->move_out_date ? ' – '.$t->move_out_date->format('M Y') : ' – present' }})</option>
+                                            @endforeach
+                                        </select>
+                                        <x-input-error :messages="$errors->get('complete_liability_tenancy_id')" class="mt-1" />
+                                    </div>
+
+                                    @if ($completingTaskSelectedTenancy)
+                                        <p class="text-xs text-brand-slate">
+                                            Currently held: KSh {{ number_format($completingTaskSelectedTenancy->depositHeldBalance(), 2) }}.
+                                            Only use this when the damage is genuinely the tenant's responsibility, not normal wear and tear.
+                                        </p>
+                                    @endif
+
+                                    <div>
+                                        <x-input-label for="complete_deduction_amount" value="Amount to Deduct (KSh)" />
+                                        <x-text-input id="complete_deduction_amount" type="number" step="0.01" wire:model="complete_deduction_amount" class="mt-1 block w-full" />
+                                        <x-input-error :messages="$errors->get('complete_deduction_amount')" class="mt-1" />
+                                        @if ($completingTaskSelectedTenancy && (float) $complete_deduction_amount > 0 && (float) $complete_deduction_amount < (float) $complete_actual_cost)
+                                            <p class="text-xs text-warning mt-1">
+                                                KSh {{ number_format((float) $complete_actual_cost - (float) $complete_deduction_amount, 2) }} of this cost will remain unrecovered — bill the tenant directly, or decide once more is held.
+                                            </p>
+                                        @endif
+                                    </div>
+
+                                    <div>
+                                        <x-input-label for="complete_deduction_reason" value="Reason" />
+                                        <textarea id="complete_deduction_reason" wire:model="complete_deduction_reason" rows="2" class="mt-1 block w-full rounded-md border-brand-border text-sm"></textarea>
+                                        <x-input-error :messages="$errors->get('complete_deduction_reason')" class="mt-1" />
+                                    </div>
+
+                                    <div>
                                         <x-input-label for="complete_deduction_evidence" value="Supporting Evidence (optional, PDF/JPG/PNG)" />
                                         <input type="file" id="complete_deduction_evidence" wire:model="complete_deduction_evidence" class="mt-1 block w-full text-sm">
                                         <x-input-error :messages="$errors->get('complete_deduction_evidence')" class="mt-1" />
                                     </div>
-                                @endif
-                            </div>
-                        @endif
+
+                                    <p class="text-xs text-brand-slate">
+                                        This proposes the deduction — it won't count against the tenant's held deposit until they acknowledge it, or you resolve a dispute in your favour.
+                                    </p>
+                                </div>
+                            @endif
+                        </div>
                     @endif
                     <div class="flex items-center gap-3">
                         <x-primary-button type="submit">Mark Complete</x-primary-button>
@@ -559,7 +621,7 @@
                     <form wire:submit="confirmTenantLiability" class="space-y-3">
                         <div>
                             <x-input-label for="liability_tenancy_id" value="Tenant liable" />
-                            <select id="liability_tenancy_id" wire:model="liability_tenancy_id" class="mt-1 block w-full rounded-md border-brand-border text-sm">
+                            <select id="liability_tenancy_id" wire:model.live="liability_tenancy_id" class="mt-1 block w-full rounded-md border-brand-border text-sm">
                                 <option value="">Select a tenancy…</option>
                                 @foreach ($decidingTenancies as $t)
                                     <option value="{{ $t->id }}">{{ $t->tenant->name }} ({{ $t->move_in_date->format('M Y') }}{{ $t->move_out_date ? ' – '.$t->move_out_date->format('M Y') : ' – present' }})</option>
@@ -567,13 +629,40 @@
                             </select>
                             <x-input-error :messages="$errors->get('liability_tenancy_id')" class="mt-1" />
                         </div>
+
+                        @if ($decidingSelectedTenancy)
+                            <p class="text-xs text-brand-slate">Currently held: KSh {{ number_format($decidingSelectedTenancy->depositHeldBalance(), 2) }}.</p>
+                        @endif
+
+                        <div>
+                            <x-input-label for="liability_deduction_amount" value="Amount to Deduct (KSh)" />
+                            <x-text-input id="liability_deduction_amount" type="number" step="0.01" wire:model="liability_deduction_amount" class="mt-1 block w-full" />
+                            <x-input-error :messages="$errors->get('liability_deduction_amount')" class="mt-1" />
+                            @if ($decidingTask && (float) $liability_deduction_amount > 0 && (float) $liability_deduction_amount < (float) $decidingTask->actual_cost)
+                                <p class="text-xs text-warning mt-1">
+                                    KSh {{ number_format((float) $decidingTask->actual_cost - (float) $liability_deduction_amount, 2) }} of this cost will remain unrecovered.
+                                </p>
+                            @endif
+                        </div>
+
                         <div>
                             <x-input-label for="liability_reason" value="Reason / evidence" />
                             <textarea id="liability_reason" wire:model="liability_reason" rows="2" class="mt-1 block w-full rounded-md border-brand-border"></textarea>
                             <x-input-error :messages="$errors->get('liability_reason')" class="mt-1" />
                         </div>
+
+                        <div>
+                            <x-input-label for="liability_deduction_evidence" value="Supporting Evidence (optional, PDF/JPG/PNG)" />
+                            <input type="file" id="liability_deduction_evidence" wire:model="liability_deduction_evidence" class="mt-1 block w-full text-sm">
+                            <x-input-error :messages="$errors->get('liability_deduction_evidence')" class="mt-1" />
+                        </div>
+
+                        <p class="text-xs text-brand-slate">
+                            This proposes the deduction — it won't count against the tenant's held deposit until they acknowledge it, or you resolve a dispute in your favour.
+                        </p>
+
                         <div class="flex items-center gap-3">
-                            <x-primary-button type="submit">Confirm Tenant Liability</x-primary-button>
+                            <x-primary-button type="submit">Confirm &amp; Charge to Deposit</x-primary-button>
                             <button type="button" wire:click="markLandlordResponsible" class="text-sm text-brand-slate hover:text-charcoal underline">Mark Landlord Responsibility Instead</button>
                         </div>
                     </form>

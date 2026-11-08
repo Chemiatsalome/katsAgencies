@@ -350,10 +350,24 @@ class Tenancy extends Model
      * held balance, and nor does one the tenant has disputed until the
      * landlord resolves that dispute (upholds or voids it).
      */
+    /**
+     * Direct maintenance/expense deposit charging: a deduction only counts
+     * once it's either acknowledged by the tenant, or disputed-and-resolved
+     * (an upheld dispute stands even without a separate acknowledgement —
+     * that's what resolving it in the landlord's favour means). A proposed
+     * deduction nobody has responded to yet (acknowledged_at and
+     * disputed_at both null) does not count — it stays a "proposal," not a
+     * confirmed charge, exactly like a currently-disputed one. Every
+     * deduction recorded before this existed has acknowledged_at backfilled
+     * to its created_at, so historical totals are unchanged.
+     */
     public function depositDeductedTotal(): float
     {
         return (float) $this->depositDeductions()
             ->whereNull('voided_at')
+            ->where(function ($q) {
+                $q->whereNotNull('acknowledged_at')->orWhereNotNull('dispute_resolved_at');
+            })
             ->where(function ($q) {
                 $q->whereNull('disputed_at')->orWhereNotNull('dispute_resolved_at');
             })

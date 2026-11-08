@@ -119,8 +119,18 @@ class DepositService
      * after) the tenancy — not limited to move-out. Refuses to deduct more
      * than is currently held, since that would mean deducting money that
      * was never actually paid in.
+     *
+     * @param  bool  $awaitingTenantAcknowledgement  Direct maintenance/
+     *                expense deposit charging: true for the new
+     *                unified-form flows — the deduction is a proposal
+     *                until the tenant acknowledges it (or a dispute is
+     *                resolved in the landlord's favour), and does not yet
+     *                count against the held balance (see
+     *                Tenancy::depositDeductedTotal()). False (default)
+     *                keeps every pre-existing caller's behaviour exactly as
+     *                it was — auto-acknowledged, counted immediately.
      */
-    public function recordDeduction(Tenancy $tenancy, float $amount, string $reason, string $date, int $recordedBy, ?UploadedFile $evidence = null): DepositDeduction
+    public function recordDeduction(Tenancy $tenancy, float $amount, string $reason, string $date, int $recordedBy, ?UploadedFile $evidence = null, bool $awaitingTenantAcknowledgement = false): DepositDeduction
     {
         if ($amount <= 0) {
             throw new InvalidArgumentException('Deduction amount must be greater than zero.');
@@ -130,7 +140,7 @@ class DepositService
         // concurrent requests (a double-click, two open tabs) can't both
         // read the same pre-write held balance and both pass the check
         // below, over-deducting past what's actually held.
-        $deduction = DB::transaction(function () use ($tenancy, $amount, $reason, $date, $recordedBy) {
+        $deduction = DB::transaction(function () use ($tenancy, $amount, $reason, $date, $recordedBy, $awaitingTenantAcknowledgement) {
             Tenancy::where('id', $tenancy->id)->lockForUpdate()->first();
 
             $held = $this->heldBalance($tenancy);
@@ -147,6 +157,7 @@ class DepositService
                 'reason' => $reason,
                 'deduction_date' => $date,
                 'recorded_by' => $recordedBy,
+                'acknowledged_at' => $awaitingTenantAcknowledgement ? null : now(),
             ]);
         });
 
@@ -167,9 +178,11 @@ class DepositService
 
         app(NotificationService::class)->notify(
             $tenancy->tenant,
-            'deposit_deduction_recorded',
-            'Deposit Deduction Recorded',
-            'KSh '.number_format($amount, 2)." was deducted from your held security deposit: {$reason}",
+            $awaitingTenantAcknowledgement ? 'deposit_deduction_proposed' : 'deposit_deduction_recorded',
+            $awaitingTenantAcknowledgement ? 'Proposed Deposit Deduction — Your Response Needed' : 'Deposit Deduction Recorded',
+            $awaitingTenantAcknowledgement
+                ? 'Your landlord proposes deducting KSh '.number_format($amount, 2)." from your security deposit: {$reason}. This is not yet confirmed — review it and acknowledge or dispute it."
+                : 'KSh '.number_format($amount, 2)." was deducted from your held security deposit: {$reason}",
             ['in_app', 'email'],
             $tenancy,
         );
@@ -177,18 +190,89 @@ class DepositService
         return $deduction;
     }
 
-    /** Void a deduction that was recorded in error or is under genuine dispute — kept on record, just excluded from the held-balance math from now on. */
+    /**
+     * The tenant agrees this deduction is fair — confirms it, which is what
+     * actually makes it count against the held balance from now on (see
+     * Tenancy::depositDeductedTotal()). Only meaningful for a deduction
+     * still awaiting a first response; already-acknowledged, voided, or
+     * disputed deductions each have their own distinct path.
+     */
+    public function acknowledgeDeduction(DepositDeduction $deduction, int $tenantId): void
+    {
+        if ($deduction->isVoided()) {
+            throw new InvalidArgumentException('This deduction has been voided — there\'s nothing to acknowledge.');
+        }
+
+        if ($deduction->disputed_at !== null) {
+            throw new InvalidArgumentException('This deduction is already disputed — withdraw the dispute first if you want to acknowledge it instead.');
+        }
+
+        if ($deduction->isAcknowledged()) {
+            return;
+        }
+
+        $deduction->forceFill([
+            'acknowledged_at' => now(),
+            'acknowledged_by' => $tenantId,
+        ])->save();
+
+        $landlord = $deduction->tenancy->house->block->property->landlord;
+
+        app(NotificationService::class)->notify(
+            $landlord,
+            'deposit_deduction_acknowledged',
+            'Tenant Acknowledged a Proposed Deduction',
+            $deduction->tenancy->tenant->name.' acknowledged the KSh '.number_format((float) $deduction->amount, 2).' deduction: '.$deduction->reason,
+            ['in_app'],
+            $deduction->tenancy,
+        );
+    }
+
+    /**
+     * Void a deduction that was recorded in error or is under genuine
+     * dispute — kept on record, just excluded from the held-balance math
+     * from now on.
+     *
+     * Direct maintenance/expense deposit charging: also corrects whichever
+     * MaintenanceTask/Expense this deduction originated from (reverse
+     * lookup, since DepositDeduction has no FK of its own back to either) —
+     * previously neither was ever cleared, permanently locking that task/
+     * expense out of ever being deducted again, and leaving the Work
+     * Orders list showing "Deducted from tenant deposit" forever even
+     * after voiding. The originating liability decision (if any) is also
+     * reversed, so a fresh or amended decision is required before a new
+     * deduction can be made — the old, now-superseded decision is never
+     * silently reused.
+     */
     public function voidDeduction(DepositDeduction $deduction, string $reason, int $voidedBy): void
     {
         if ($deduction->isVoided()) {
             throw new InvalidArgumentException('This deduction has already been voided.');
         }
 
-        $deduction->forceFill([
-            'voided_at' => now(),
-            'void_reason' => $reason,
-            'voided_by' => $voidedBy,
-        ])->save();
+        DB::transaction(function () use ($deduction, $reason, $voidedBy) {
+            $deduction->forceFill([
+                'voided_at' => now(),
+                'void_reason' => $reason,
+                'voided_by' => $voidedBy,
+            ])->save();
+
+            \App\Models\MaintenanceTask::where('deposit_deduction_id', $deduction->id)->update(['deposit_deduction_id' => null]);
+
+            $expense = \App\Models\Expense::where('deposit_deduction_id', $deduction->id)->first();
+
+            if ($expense) {
+                $expense->update(['deposit_deduction_id' => null]);
+
+                $decision = app(TenantLiabilityDecisionService::class)->activeDecisionFor($expense);
+
+                if ($decision) {
+                    app(TenantLiabilityDecisionService::class)->reverse(
+                        $decision, "Deduction voided: {$reason}", $voidedBy,
+                    );
+                }
+            }
+        });
     }
 
     /**

@@ -172,7 +172,7 @@ class AppNotification extends Model
                     ? route('manage.maintenance.index', ['complaint' => $this->related_id])
                     : route('manage.maintenance.index', ['tab' => 'requests']))
                 : null,
-            'deposit_deduction_disputed' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
+            'deposit_deduction_disputed', 'deposit_deduction_acknowledged' => $viewerIsLandlordOrManager && $this->related_type === Tenancy::class
                 ? route('manage.tenancies.show', $this->related_id).'#deposit'
                 : null,
             'tenancy_notice_acknowledged', 'tenancy_notice_dispute_submitted', 'tenancy_notice_time_requested', 'tenancy_notice_extension_requested' => $viewerIsLandlordOrManager && $this->related_type === TenancyNotice::class && $this->related
@@ -207,7 +207,7 @@ class AppNotification extends Model
             // confirmed, disputed, or a correction reopening it — all land
             // back on My Rent, where the claim and its status actually show.
             'payment_confirmed_by_landlord', 'payment_disputed' => $viewerIsTenant ? route('tenant.rent') : null,
-            'deposit_requested', 'deposit_deduction_recorded', 'deposit_refunded', 'deposit_payment_confirmed', 'deposit_payment_confirmed_by_landlord', 'deposit_payment_disputed', 'deposit_dispute_resolved', 'deposit_payment_failed' => $viewerIsTenant ? route('tenant.deposit') : null,
+            'deposit_requested', 'deposit_deduction_recorded', 'deposit_deduction_proposed', 'deposit_refunded', 'deposit_payment_confirmed', 'deposit_payment_confirmed_by_landlord', 'deposit_payment_disputed', 'deposit_dispute_resolved', 'deposit_payment_failed' => $viewerIsTenant ? route('tenant.deposit') : null,
             'due_day_change_decided', 'contract_sent' => $viewerIsTenant ? route('tenant.contract') : null,
             'tenancy_notice_issued', 'tenancy_notice_decision_made', 'tenancy_notice_withdrawn', 'tenancy_ended' => $viewerIsTenant ? route('tenant.tenancy') : null,
             'tenancy_change_request_decided', 'tenancy_renewal_decision_made', 'tenancy_renewal_alternative_proposed' => $viewerIsTenant ? route('tenant.tenancy') : null,

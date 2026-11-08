@@ -16,6 +16,30 @@ class Deposit extends Component
 
     public string $dispute_reason = '';
 
+    /**
+     * Direct maintenance/expense deposit charging: confirming maintenance
+     * completion and disputing financial liability are two different
+     * questions — a tenant acknowledging a proposed deduction is agreeing
+     * they're responsible for the cost, not separately confirming the
+     * repair itself was carried out. Reuses the existing dispute mechanism
+     * rather than a second one: acknowledge and dispute are the only two
+     * responses to a deduction still awaiting a first response.
+     */
+    public function acknowledgeDeduction(int $deductionId): void
+    {
+        $deduction = $this->ownDeduction($deductionId);
+
+        try {
+            app(DepositService::class)->acknowledgeDeduction($deduction, Auth::user()->tenant->id);
+        } catch (InvalidArgumentException $e) {
+            session()->flash('error', $e->getMessage());
+
+            return;
+        }
+
+        session()->flash('status', 'You acknowledged this deduction — it now counts against your held deposit.');
+    }
+
     public function startDispute(int $deductionId): void
     {
         $deduction = $this->ownDeduction($deductionId);

@@ -295,6 +295,15 @@ class TenantLiabilityDecisionTest extends TestCase
         ]);
 
         $costService = app(MaintenanceCostService::class);
+
+        // Integration Phase A: Expense is the canonical liability decidable
+        // — recordExpenseFor() is what complete() always calls to create it,
+        // mirrored here rather than hand-building an Expense row that might
+        // drift from what that method actually produces.
+        $costService->recordExpenseFor($task);
+        $task->refresh();
+        $this->assertNotNull($task->expense_id, 'A real linked Expense must exist before liability can be decided.');
+
         $candidate = $costService->candidateTenancyFor($task);
         // The complaint's own tenant is the former tenant, even though they've since moved out.
         $this->assertEquals('single', $candidate['kind']);
@@ -302,7 +311,7 @@ class TenantLiabilityDecisionTest extends TestCase
 
         $this->assertFalse($costService->canDeductFromDeposit($task), 'No liability decision recorded yet.');
 
-        app(TenantLiabilityDecisionService::class)->decide($task, 'tenant_liable', $formerTenancy->id, 'Confirmed.', $landlord->id);
+        app(TenantLiabilityDecisionService::class)->decide($task->expense, 'tenant_liable', $formerTenancy->id, 'Confirmed.', $landlord->id);
 
         $this->assertTrue($costService->canDeductFromDeposit($task->fresh()));
 

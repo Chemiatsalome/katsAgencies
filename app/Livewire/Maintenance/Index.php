@@ -80,25 +80,41 @@ class Index extends Component
 
     public string $complete_additional_cost = '';
 
-    public bool $complete_deduct_from_deposit = false;
+    // Direct maintenance/expense deposit charging: replaces the old plain
+    // checkbox — 'landlord' (default) or 'tenant'. Selecting 'tenant' is
+    // itself the liability decision; there is no separate step afterward.
+    public string $complete_cost_responsibility = 'landlord';
+
+    public ?int $complete_liability_tenancy_id = null;
+
+    public string $complete_deduction_amount = '';
+
+    public string $complete_deduction_reason = '';
 
     public $complete_deduction_evidence;
 
     // Post-confirmation deduction (for a completed task tied to a
     // complaint — only reachable once the tenant has confirmed the fix;
-    // see MaintenanceCostService::canDeductFromDeposit()).
+    // see MaintenanceCostService::canDeductFromDeposit()). Kept only as a
+    // narrow legacy fallback for a decision made before this phase that has
+    // no deduction yet — the primary path is now confirmTenantLiability()
+    // below, which decides and deducts together.
     public ?int $deductingTaskId = null;
 
     public $deductingTaskEvidence;
 
-    // Liability decision modal (Tier 2) — the precondition
-    // MaintenanceCostService::canDeductFromDeposit() requires before the
-    // deduction above becomes reachable at all.
+    // Liability decision + deduction modal — direct maintenance/expense
+    // deposit charging merges what used to be two separate steps
+    // (Decide Liability, then Deduct from Deposit) into one.
     public ?int $decidingTaskId = null;
 
     public ?int $liability_tenancy_id = null;
 
     public string $liability_reason = '';
+
+    public string $liability_deduction_amount = '';
+
+    public $liability_deduction_evidence;
 
     // Vendor form
     public bool $showVendorForm = false;
@@ -515,21 +531,32 @@ class Index extends Component
 
     public function openCompleteForm(int $taskId): void
     {
-        $task = MaintenanceTask::findOrFail($taskId);
+        $task = MaintenanceTask::with('complaint')->findOrFail($taskId);
         // Phase 7A, finding 4: completion records cost/resolution — resolve.
         $this->authorize('resolve', $task);
 
         $this->activeTaskId = $taskId;
         $this->complete_actual_cost = ($task->actual_cost ?: $task->estimated_cost) ? (string) ($task->actual_cost ?: $task->estimated_cost) : '';
         $this->complete_additional_cost = '';
-        $this->complete_deduct_from_deposit = false;
+        $this->complete_cost_responsibility = 'landlord';
+        $this->complete_deduction_reason = '';
         $this->complete_deduction_evidence = null;
+
+        // Direct maintenance/expense deposit charging: never guessed for a
+        // complaint-linked task — tenant confirmation can't have happened
+        // yet at this exact point, so the toggle stays disabled regardless
+        // of a candidate (see complete()'s own $chargingTenant gate).
+        $this->complete_liability_tenancy_id = ! $task->complaint_id
+            ? (app(MaintenanceCostService::class)->candidateTenancyFor($task)['tenancy']?->id)
+            : null;
+        $this->complete_deduction_amount = $this->complete_actual_cost;
+
         $this->showCompleteForm = true;
     }
 
     public function complete(): void
     {
-        $task = MaintenanceTask::findOrFail($this->activeTaskId);
+        $task = MaintenanceTask::with('complaint')->findOrFail($this->activeTaskId);
         // Phase 7A, finding 4: matches PermissionSeeder's own documented
         // intent for maintenance.resolve ("mark maintenance resolved").
         $this->authorize('resolve', $task);
@@ -559,20 +586,39 @@ class Index extends Component
             $this->authorize('manage_costs', $task);
         }
 
-        // The deposit-deduction checkbox only ever appears (and only ever
-        // acts) on first completion, never on a re-completion — see
-        // openCompleteForm()'s own reset of complete_deduct_from_deposit and
-        // the $alreadyExpensed branch below, which never reads it.
-        if (! $alreadyExpensed && $this->complete_deduct_from_deposit) {
+        // Direct maintenance/expense deposit charging: only ever reachable
+        // on first completion (a re-completion's additional cost has no
+        // back-link to this task at all — see recordAdditionalExpenseFor()
+        // — charging it would need its own separate flow, not built here),
+        // and never for a complaint-linked task — tenant confirmation
+        // cannot have happened yet at the exact moment a task is first
+        // marked complete. Once confirmed, confirmTenantLiability() below
+        // is the path for charging a complaint-linked task.
+        $chargingTenant = ! $alreadyExpensed && ! $task->complaint_id && $this->complete_cost_responsibility === 'tenant';
+
+        if ($chargingTenant) {
+            // Do not allow ordinary cost-recording permission to authorize
+            // deposit deductions — this is deliberately a separate check,
+            // not implied by manage_costs above.
             $this->authorize('manage_liability', $task);
         }
 
-        $data = $this->validate($alreadyExpensed ? [
+        $rules = $alreadyExpensed ? [
             'complete_additional_cost' => ['nullable', 'numeric', 'min:0'],
         ] : [
             'complete_actual_cost' => ['required', 'numeric', 'min:0'],
             'complete_deduction_evidence' => ['nullable', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png'],
-        ]);
+        ];
+
+        if ($chargingTenant) {
+            $rules += [
+                'complete_liability_tenancy_id' => ['required', 'integer', 'exists:tenancies,id'],
+                'complete_deduction_amount' => ['required', 'numeric', 'min:0.01'],
+                'complete_deduction_reason' => ['required', 'string', 'max:1000'],
+            ];
+        }
+
+        $data = $this->validate($rules);
 
         $task->update([
             'status' => 'completed',
@@ -589,38 +635,50 @@ class Index extends Component
         } else {
             app(MaintenanceCostService::class)->recordExpenseFor($task);
 
-            // A deliberate, separate decision at completion time, never
-            // automatic — and never allowed to block the task from
-            // finishing if it fails (e.g. the deposit doesn't hold enough).
-            //
-            // Tier 2: checking this box, with the candidate's name already
-            // shown on-screen (render()'s completingTaskTenancy), is itself
-            // the explicit human liability decision — re-derived server-side
-            // here rather than trusting any client-submitted id, and only
-            // ever created when there's exactly one unambiguous candidate.
-            if ($this->complete_deduct_from_deposit) {
-                $freshTask = $task->fresh();
-                $candidate = $freshTask->complaint_id
-                    ? ['kind' => 'none', 'tenancy' => null]
-                    : app(MaintenanceCostService::class)->candidateTenancyFor($freshTask);
-
+            // The expense itself is always recorded regardless — only the
+            // charge-to-tenant decision+deduction below is conditional and
+            // atomic: validated server-side (tenancy ownership via
+            // exists:tenancies,id plus the decide()/deductFromTenantDeposit()
+            // calls' own re-derivation — never trusting the client-submitted
+            // tenancy id beyond "does this row exist"), and never left
+            // half-done — if the deduction fails for any reason (e.g. no
+            // deposit held), the whole decide+deduct is rolled back
+            // together so the expense is never left "marked as tenant-
+            // charged" with no actual deduction behind it.
+            if ($chargingTenant) {
                 try {
-                    if ($candidate['kind'] !== 'single') {
-                        throw new RuntimeException('No single tenant could be identified for this unit on this date — decide liability from the Work Orders list instead.');
-                    }
+                    \Illuminate\Support\Facades\DB::transaction(function () use ($task, $data) {
+                        // Server-side tenancy/property association check —
+                        // see confirmTenantLiability()'s identical guard.
+                        $tenancy = Tenancy::where('house_id', $task->house_id)->whereKey((int) $data['complete_liability_tenancy_id'])->first();
 
-                    app(\App\Services\TenantLiabilityDecisionService::class)->decide(
-                        $freshTask, 'tenant_liable', $candidate['tenancy']->id,
-                        'Confirmed at task completion.', Auth::id(),
-                    );
+                        if (! $tenancy) {
+                            throw new RuntimeException('That tenancy has never occupied this unit — select one from the list.');
+                        }
 
-                    app(MaintenanceCostService::class)->deductFromTenantDeposit(
-                        $freshTask,
-                        Auth::id(),
-                        $this->complete_deduction_evidence ?: null,
-                    );
+                        $freshTask = $task->fresh('expense');
+
+                        app(\App\Services\TenantLiabilityDecisionService::class)->decide(
+                            $freshTask->expense, 'tenant_liable', $tenancy->id, $data['complete_deduction_reason'], Auth::id(),
+                        );
+
+                        app(MaintenanceCostService::class)->deductFromTenantDeposit(
+                            $freshTask,
+                            Auth::id(),
+                            $this->complete_deduction_evidence ?: null,
+                            (float) $data['complete_deduction_amount'],
+                            awaitingTenantAcknowledgement: true,
+                            reason: $data['complete_deduction_reason'],
+                        );
+                    });
                 } catch (RuntimeException|\InvalidArgumentException $e) {
-                    session()->flash('error', "Task completed, but the deposit deduction wasn't recorded: {$e->getMessage()}");
+                    // The task is still correctly completed above — only the
+                    // charge-to-tenant proposal failed. $chargeFailed stops
+                    // the optimistic "awaiting the tenant's response" message
+                    // below from being shown alongside this real error, since
+                    // no deduction (or liability decision) actually exists.
+                    $chargeFailed = true;
+                    session()->flash('error', "Task completed, but the deposit charge wasn't recorded: {$e->getMessage()}");
                 }
             }
         }
@@ -633,7 +691,10 @@ class Index extends Component
         $this->notifyTenantOfStatusChange($task, 'Your maintenance request has been resolved.');
 
         $this->showCompleteForm = false;
-        session()->flash('status', 'Task marked complete and cost recorded as an expense.');
+
+        if (! ($chargeFailed ?? false)) {
+            session()->flash('status', $chargingTenant ? 'Task marked complete. The proposed deposit charge is awaiting the tenant\'s response.' : 'Task marked complete and cost recorded as an expense.');
+        }
     }
 
     /** Every tenancy that has ever occupied this task's house — the override list for the liability decision form. */
@@ -646,39 +707,116 @@ class Index extends Component
 
     public function openLiabilityDecision(int $taskId): void
     {
-        $task = MaintenanceTask::with('complaint')->findOrFail($taskId);
+        $task = MaintenanceTask::with(['complaint', 'expense'])->findOrFail($taskId);
         // Phase 7A follow-up: liability decisions are their own permission
         // now, separate from operational resolve — a manager must never
         // reach this via scheduling, assignment, cost-recording, or
         // operational resolve authority alone.
         $this->authorize('manage_liability', $task);
 
+        // Integration Phase A: the decision is recorded against this task's
+        // linked Expense (the canonical decidable shared with Expenses\Index)
+        // — never auto-created here if missing. In practice complete()
+        // always calls recordExpenseFor() first when actual_cost > 0 (the
+        // only time this button is ever shown), so this should never
+        // trigger from the normal flow; kept as a safe refusal rather than
+        // assuming that invariant always holds.
+        if (! $task->expense) {
+            session()->flash('error', 'This task has no recorded cost yet — nothing to decide liability for.');
+
+            return;
+        }
+
+        // Preserve the tenant confirmation requirement for complaint-linked
+        // maintenance — a landlord opening this modal before the tenant has
+        // confirmed the fix would otherwise fill in an amount/reason only
+        // to have the deduction refused at the last step. Refused up front
+        // instead, mirroring the Work Orders row's own "Awaiting tenant
+        // confirmation" label.
+        if ($task->complaint_id && ! $task->complaint?->tenant_confirmed_at) {
+            session()->flash('error', 'The tenant hasn\'t confirmed this fix yet — wait for their confirmation before charging the deposit.');
+
+            return;
+        }
+
         $this->decidingTaskId = $taskId;
         $candidate = app(MaintenanceCostService::class)->candidateTenancyFor($task);
         $this->liability_tenancy_id = $candidate['tenancy']?->id;
         $this->liability_reason = '';
+        $this->liability_deduction_amount = (string) $task->actual_cost;
+        $this->liability_deduction_evidence = null;
     }
 
     public function cancelLiabilityDecision(): void
     {
-        $this->reset(['decidingTaskId', 'liability_tenancy_id', 'liability_reason']);
+        $this->reset(['decidingTaskId', 'liability_tenancy_id', 'liability_reason', 'liability_deduction_amount', 'liability_deduction_evidence']);
     }
 
+    /**
+     * Direct maintenance/expense deposit charging: decides liability and
+     * records the (awaiting-acknowledgement) deduction together, in one
+     * transaction — this is now the primary path for charging a completed
+     * task to a tenant's deposit, replacing the old two-step Decide-
+     * Liability-then-Deduct-from-Deposit flow. openDeductForm()/
+     * confirmDeductFromDeposit() remain only as a narrow fallback for a
+     * decision that already exists with no deduction yet (e.g. one made
+     * before this change shipped).
+     */
     public function confirmTenantLiability(): void
     {
-        $task = MaintenanceTask::findOrFail($this->decidingTaskId);
+        $task = MaintenanceTask::with(['expense', 'complaint'])->findOrFail($this->decidingTaskId);
         // Phase 7A follow-up: same reasoning as openLiabilityDecision() — manage_liability.
         $this->authorize('manage_liability', $task);
+
+        // Integration Phase A: see openLiabilityDecision() — same safe refusal.
+        if (! $task->expense) {
+            $this->addError('liability_reason', 'This task has no recorded cost yet — nothing to decide liability for.');
+
+            return;
+        }
+
+        if ($task->complaint_id && ! $task->complaint?->tenant_confirmed_at) {
+            $this->addError('liability_reason', 'The tenant hasn\'t confirmed this fix yet — wait for their confirmation before charging the deposit.');
+
+            return;
+        }
 
         $this->validate([
             'liability_tenancy_id' => ['required', 'integer', 'exists:tenancies,id'],
             'liability_reason' => ['required', 'string', 'max:1000'],
+            'liability_deduction_amount' => ['required', 'numeric', 'min:0.01'],
+            'liability_deduction_evidence' => ['nullable', 'file', 'max:10240', 'mimes:pdf,jpg,jpeg,png'],
         ]);
 
         try {
-            app(\App\Services\TenantLiabilityDecisionService::class)->decide(
-                $task, 'tenant_liable', (int) $this->liability_tenancy_id, $this->liability_reason, Auth::id(),
-            );
+            \Illuminate\Support\Facades\DB::transaction(function () use ($task) {
+                // Server-side tenancy ownership/property association check —
+                // exists:tenancies,id above only proves the row exists
+                // somewhere, not that it's related to this task at all.
+                // Scoped exactly like everyTenancyForTask()'s own dropdown:
+                // only a tenancy that has actually occupied this task's own
+                // house is ever accepted, regardless of what the client
+                // submits — a tenant at a different property (even one the
+                // acting landlord/manager legitimately owns) is refused.
+                $tenancy = Tenancy::where('house_id', $task->house_id)->whereKey((int) $this->liability_tenancy_id)->first();
+
+                if (! $tenancy) {
+                    throw new RuntimeException('That tenancy has never occupied this unit — select one from the list.');
+                }
+
+                app(\App\Services\TenantLiabilityDecisionService::class)->decide(
+                    $task->expense, 'tenant_liable', $tenancy->id, $this->liability_reason, Auth::id(),
+                );
+
+                app(MaintenanceCostService::class)->deductFromTenantDeposit(
+                    $task->fresh(),
+                    Auth::id(),
+                    $this->liability_deduction_evidence ?: null,
+                    (float) $this->liability_deduction_amount,
+                    awaitingTenantAcknowledgement: true,
+                    reason: $this->liability_reason,
+                );
+            });
         } catch (RuntimeException|\InvalidArgumentException $e) {
             $this->addError('liability_reason', $e->getMessage());
 
@@ -686,20 +824,27 @@ class Index extends Component
         }
 
         $this->cancelLiabilityDecision();
-        session()->flash('status', 'Liability decision recorded.');
+        session()->flash('status', 'The proposed deposit charge is awaiting the tenant\'s response.');
     }
 
     public function markLandlordResponsible(): void
     {
-        $task = MaintenanceTask::findOrFail($this->decidingTaskId);
+        $task = MaintenanceTask::with('expense')->findOrFail($this->decidingTaskId);
         // Phase 7A follow-up: same reasoning as openLiabilityDecision() — manage_liability.
         $this->authorize('manage_liability', $task);
+
+        // Integration Phase A: see openLiabilityDecision() — same safe refusal.
+        if (! $task->expense) {
+            $this->addError('liability_reason', 'This task has no recorded cost yet — nothing to decide liability for.');
+
+            return;
+        }
 
         $this->validate(['liability_reason' => ['required', 'string', 'max:1000']]);
 
         try {
             app(\App\Services\TenantLiabilityDecisionService::class)->decide(
-                $task, 'landlord_responsible', null, $this->liability_reason, Auth::id(),
+                $task->expense, 'landlord_responsible', null, $this->liability_reason, Auth::id(),
             );
         } catch (RuntimeException $e) {
             $this->addError('liability_reason', $e->getMessage());
@@ -801,7 +946,7 @@ class Index extends Component
         $properties = Property::accessibleBy($user)->orderBy('name')->get();
 
         $tasksQuery = MaintenanceTask::accessibleBy($user)
-            ->with(['property', 'house', 'vendor', 'complaint']);
+            ->with(['property', 'house', 'vendor', 'complaint', 'expense', 'depositDeduction']);
 
         $data = [
             'properties' => $properties,
@@ -815,20 +960,25 @@ class Index extends Component
         if ($this->showCompleteForm && ($completingTask = MaintenanceTask::with('complaint')->find($this->activeTaskId))) {
             $data['completingTaskHasExpense'] = $completingTask->expense_id !== null;
             $data['completingTaskPreviousCost'] = $completingTask->actual_cost;
-            // A task tied to a tenant's own complaint has no tenancy to
-            // offer an immediate deduction against yet — tenant_confirmed_at
-            // is always null at this exact moment (complete() below just
-            // reset it), so the checkbox would do nothing but fail. It
-            // becomes available afterward from the Work Orders list, once
-            // they've confirmed the fix (see canDeductFromDeposit()).
-            //
-            // Tier 2: only offered when candidateTenancyFor() resolves to
-            // exactly one tenancy — never for 'none'/'multiple', which would
-            // otherwise invite guessing who to charge.
-            $candidate = $completingTask->complaint_id
-                ? ['kind' => 'none', 'tenancy' => null]
-                : app(MaintenanceCostService::class)->candidateTenancyFor($completingTask);
-            $data['completingTaskTenancy'] = $candidate['kind'] === 'single' ? $candidate['tenancy'] : null;
+
+            // Direct maintenance/expense deposit charging: a task tied to a
+            // tenant's own complaint can never be charged at this exact
+            // point — tenant_confirmed_at cannot have happened yet for a
+            // task still being marked complete for the first time. The
+            // toggle stays visible but disabled, with an explanation; once
+            // confirmed, confirmTenantLiability() from the Work Orders list
+            // is the path for charging it.
+            $data['completingTaskComplaintLinked'] = (bool) $completingTask->complaint_id;
+
+            // Preselect only when candidateTenancyFor() resolves to exactly
+            // one tenancy — never for 'none'/'multiple', which would
+            // otherwise invite guessing who to charge. The landlord can
+            // always pick a different one from the full occupancy history
+            // below regardless.
+            $data['completingTaskCandidateTenancies'] = $completingTask->complaint_id ? collect() : $this->everyTenancyForTask($completingTask);
+            $data['completingTaskSelectedTenancy'] = $this->complete_liability_tenancy_id
+                ? $data['completingTaskCandidateTenancies']->firstWhere('id', $this->complete_liability_tenancy_id)
+                : null;
         }
 
         // A complaint the tenant just submitted, not yet converted into a
@@ -936,14 +1086,20 @@ class Index extends Component
             $data['costService'] = app(MaintenanceCostService::class);
             $data['deductingTask'] = $this->deductingTaskId ? MaintenanceTask::with('complaint')->find($this->deductingTaskId) : null;
 
+            // Integration Phase A: keyed via each task's linked Expense (the
+            // canonical decidable, shared with Expenses\Index) — a task with
+            // no expense yet has nothing to decide liability against.
             $liabilityService = app(\App\Services\TenantLiabilityDecisionService::class);
             $data['decisionsByTaskId'] = $data['tasks']->getCollection()->mapWithKeys(
-                fn (MaintenanceTask $t) => [$t->id => $liabilityService->activeDecisionFor($t)]
+                fn (MaintenanceTask $t) => [$t->id => $t->expense ? $liabilityService->activeDecisionFor($t->expense) : null]
             );
             $decidingTask = $this->decidingTaskId ? MaintenanceTask::find($this->decidingTaskId) : null;
             $data['decidingTask'] = $decidingTask;
             $data['decidingCandidate'] = $decidingTask ? app(MaintenanceCostService::class)->candidateTenancyFor($decidingTask) : null;
             $data['decidingTenancies'] = $decidingTask ? $this->everyTenancyForTask($decidingTask) : collect();
+            $data['decidingSelectedTenancy'] = $this->liability_tenancy_id
+                ? $data['decidingTenancies']->firstWhere('id', $this->liability_tenancy_id)
+                : null;
         }
 
         if ($this->tab === 'calendar') {

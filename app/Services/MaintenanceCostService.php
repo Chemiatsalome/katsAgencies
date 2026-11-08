@@ -161,6 +161,14 @@ class MaintenanceCostService
      * done is exactly the kind of thing that produces disputes.
      * "Reopened" (confirmation reset back to null because the tenant said
      * it wasn't actually fixed) correctly blocks this again.
+     *
+     * Integration Phase A: the liability decision is looked up against this
+     * task's own linked Expense, never the task itself — Expense is the
+     * single canonical decidable shared with Expenses\Index, so a decision
+     * made from either screen is now recognized by both. A task with no
+     * linked expense yet (recordExpenseFor() never created one, e.g. a
+     * zero-cost completion) has nothing to decide liability against —
+     * handled safely as simply not yet eligible, never by creating one here.
      */
     public function canDeductFromDeposit(MaintenanceTask $task): bool
     {
@@ -176,7 +184,11 @@ class MaintenanceCostService
             return false;
         }
 
-        $decision = app(TenantLiabilityDecisionService::class)->activeDecisionFor($task);
+        if (! $task->expense) {
+            return false;
+        }
+
+        $decision = app(TenantLiabilityDecisionService::class)->activeDecisionFor($task->expense);
 
         return $decision && $decision->isTenantLiable() && $decision->tenancy && $decision->tenancy->depositHeldBalance() > 0;
     }
@@ -190,9 +202,29 @@ class MaintenanceCostService
      * before a cost exists, before the tenant has confirmed the fix when
      * this task came from their own complaint, or before a liability
      * decision exists at all (see canDeductFromDeposit()).
+     *
+     * Integration Phase A: looks up the decision via this task's linked
+     * Expense (the canonical decidable) — see canDeductFromDeposit()'s
+     * docblock for why.
+     *
+     * Direct maintenance/expense deposit charging:
+     * @param  ?float  $amount  Defaults to the task's full actual_cost
+     *         (unchanged behaviour for every existing caller). Pass a
+     *         smaller amount to support partial coverage — never more than
+     *         actual_cost, and still capped by DepositService::
+     *         recordDeduction()'s own held-balance guard regardless.
+     * @param  bool  $awaitingTenantAcknowledgement  See DepositService::
+     *         recordDeduction() — false (default) preserves the existing
+     *         instant-confirm behaviour for every pre-existing caller.
      */
-    public function deductFromTenantDeposit(MaintenanceTask $task, int $recordedBy, ?UploadedFile $evidence = null): DepositDeduction
-    {
+    public function deductFromTenantDeposit(
+        MaintenanceTask $task,
+        int $recordedBy,
+        ?UploadedFile $evidence = null,
+        ?float $amount = null,
+        bool $awaitingTenantAcknowledgement = false,
+        ?string $reason = null,
+    ): DepositDeduction {
         if ($task->deposit_deduction_id) {
             throw new RuntimeException('This task\'s cost has already been deducted from the tenant\'s deposit.');
         }
@@ -205,7 +237,11 @@ class MaintenanceCostService
             throw new RuntimeException('The tenant hasn\'t confirmed this fix yet — wait for their confirmation before deducting the cost.');
         }
 
-        $decision = app(TenantLiabilityDecisionService::class)->activeDecisionFor($task);
+        if (! $task->expense) {
+            throw new RuntimeException('This task has no recorded expense yet — nothing to decide liability for.');
+        }
+
+        $decision = app(TenantLiabilityDecisionService::class)->activeDecisionFor($task->expense);
 
         if (! $decision || ! $decision->isTenantLiable()) {
             throw new RuntimeException('No tenant-liability decision has been recorded for this task yet — decide who\'s liable before deducting.');
@@ -217,13 +253,20 @@ class MaintenanceCostService
             throw new RuntimeException('That tenant\'s deposit has already been settled or is unavailable — this can\'t be deducted from a deposit. Bill them directly, or mark this expense as absorbed.');
         }
 
+        $amount ??= (float) $task->actual_cost;
+
+        if ($amount <= 0 || $amount > (float) $task->actual_cost + 0.01) {
+            throw new RuntimeException('The deduction amount must be greater than zero and cannot exceed the task\'s actual cost.');
+        }
+
         $deduction = app(DepositService::class)->recordDeduction(
             $tenancy,
-            (float) $task->actual_cost,
-            "Maintenance: {$task->title}",
+            $amount,
+            $reason ?: "Maintenance: {$task->title}",
             $task->completed_at?->toDateString() ?? now()->toDateString(),
             $recordedBy,
             $evidence,
+            $awaitingTenantAcknowledgement,
         );
 
         $task->update(['deposit_deduction_id' => $deduction->id]);

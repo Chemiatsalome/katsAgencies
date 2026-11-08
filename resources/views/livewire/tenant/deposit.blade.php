@@ -67,6 +67,10 @@
                                                     <span class="block text-[11px] text-warning">Dispute pending: {{ $deduction->dispute_reason }}</span>
                                                 @elseif ($deduction->disputed_at)
                                                     <span class="block text-[11px] text-brand-slate">Dispute resolved — deduction upheld</span>
+                                                @elseif ($deduction->isAwaitingTenantResponse())
+                                                    <span class="block text-[11px] text-warning font-medium">Awaiting your response — not yet confirmed</span>
+                                                @elseif ($deduction->isAcknowledged())
+                                                    <span class="block text-[11px] text-success">Acknowledged {{ $deduction->acknowledged_at->format('d M Y') }}</span>
                                                 @endif
                                             </td>
                                             <td class="px-5 py-2">
@@ -79,7 +83,10 @@
                                             <td class="px-5 py-2 text-right {{ $deduction->isVoided() ? 'text-brand-slate line-through' : 'text-danger' }}">
                                                 -KSh {{ number_format($deduction->amount, 2) }}
                                             </td>
-                                            <td class="px-5 py-2 text-right whitespace-nowrap">
+                                            <td class="px-5 py-2 text-right whitespace-nowrap space-x-2">
+                                                @if ($deduction->isAwaitingTenantResponse())
+                                                    <button wire:click="acknowledgeDeduction({{ $deduction->id }})" class="text-xs text-success hover:underline">Acknowledge</button>
+                                                @endif
                                                 @if (! $deduction->isVoided() && ! $deduction->isDisputePending())
                                                     <button wire:click="startDispute({{ $deduction->id }})" class="text-xs text-danger hover:underline">Dispute</button>
                                                 @endif

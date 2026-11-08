@@ -446,7 +446,10 @@ class MaintenanceTaskPermissionSeparationTest extends TestCase
             ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
             ->call('openCompleteForm', $task->id)
             ->set('complete_actual_cost', 1500)
-            ->set('complete_deduct_from_deposit', true)
+            ->set('complete_cost_responsibility', 'tenant')
+            ->set('complete_liability_tenancy_id', 1)
+            ->set('complete_deduction_amount', 1500)
+            ->set('complete_deduction_reason', 'Tenant caused this.')
             ->call('complete')
             ->assertForbidden();
 

@@ -29,11 +29,18 @@ class LiabilityTriageReport extends Command
             ->get()
             ->filter(fn (Expense $e) => ! $service->activeDecisionFor($e));
 
+        // Integration Phase A: Expense is now the sole canonical decidable
+        // — a task's own liability decision lives on its linked Expense,
+        // never on the task itself. Checking activeDecisionFor($t) directly
+        // here would list every costed task forever, even ones already
+        // decided via their expense (which the $expenses query above
+        // already lists separately) — a task with no linked expense yet
+        // has nothing to triage.
         $tasks = MaintenanceTask::whereNull('deposit_deduction_id')
             ->where('actual_cost', '>', 0)
-            ->with('property', 'house', 'complaint')
+            ->with('property', 'house', 'complaint', 'expense')
             ->get()
-            ->filter(fn (MaintenanceTask $t) => ! $service->activeDecisionFor($t));
+            ->filter(fn (MaintenanceTask $t) => $t->expense && ! $service->activeDecisionFor($t->expense));
 
         $this->info("Expenses needing a liability decision: {$expenses->count()}");
         foreach ($expenses as $expense) {

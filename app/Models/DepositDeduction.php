@@ -20,6 +20,7 @@ use Spatie\Activitylog\Traits\LogsActivity;
     'tenancy_id', 'amount', 'reason', 'deduction_date', 'recorded_by',
     'voided_at', 'void_reason', 'voided_by',
     'disputed_at', 'dispute_reason', 'disputed_by', 'dispute_resolved_at',
+    'acknowledged_at', 'acknowledged_by',
 ])]
 class DepositDeduction extends Model
 {
@@ -33,6 +34,7 @@ class DepositDeduction extends Model
             'voided_at' => 'datetime',
             'disputed_at' => 'datetime',
             'dispute_resolved_at' => 'datetime',
+            'acknowledged_at' => 'datetime',
         ];
     }
 
@@ -56,6 +58,11 @@ class DepositDeduction extends Model
         return $this->belongsTo(Tenant::class, 'disputed_by');
     }
 
+    public function acknowledgedBy(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class, 'acknowledged_by');
+    }
+
     public function documents(): MorphMany
     {
         return $this->morphMany(Document::class, 'documentable');
@@ -70,6 +77,24 @@ class DepositDeduction extends Model
     public function isDisputePending(): bool
     {
         return $this->disputed_at !== null && $this->dispute_resolved_at === null;
+    }
+
+    /** Explicitly confirmed by the tenant — distinct from a dispute the landlord later upheld. */
+    public function isAcknowledged(): bool
+    {
+        return $this->acknowledged_at !== null;
+    }
+
+    /**
+     * A proposed deduction nobody has responded to yet — never voided or
+     * acknowledged, and not (yet) disputed either. Direct maintenance/
+     * expense deposit charging: this is the state a deduction starts in
+     * when recorded through the new unified forms, instead of counting
+     * against the held balance immediately.
+     */
+    public function isAwaitingTenantResponse(): bool
+    {
+        return ! $this->isVoided() && ! $this->isAcknowledged() && $this->disputed_at === null;
     }
 
     public function getActivitylogOptions(): LogOptions
