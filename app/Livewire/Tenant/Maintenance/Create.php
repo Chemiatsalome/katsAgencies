@@ -65,7 +65,14 @@ class Create extends Component
             'category' => ['required', 'in:'.implode(',', self::CATEGORIES)],
             'subject' => ['required', 'string', 'max:255'],
             'description' => ['required', 'string', 'max:2000'],
-            'priority' => ['required', 'in:low,normal,urgent'],
+            // Phase 7B, F1: 'emergency' added — previously capped at 'urgent'
+            // (mapped to 'high'), so a tenant had no way to flag a genuinely
+            // dangerous issue (fire, gas leak, major flooding) any
+            // differently from a routine urgent repair. The landlord's own
+            // emergency-priority dashboard tile/sort already existed and
+            // worked for landlord-created tasks — it just could never be
+            // reached from this form.
+            'priority' => ['required', 'in:low,normal,urgent,emergency'],
             'photo' => ['nullable', 'file', 'max:10240', 'mimes:jpg,jpeg,png,pdf'],
         ]);
 
@@ -74,7 +81,7 @@ class Create extends Component
         $tenancy?->load('house.block.property');
         abort_if(! $tenancy, 404, 'No active tenancy is linked to your account.');
 
-        $priorityMap = ['low' => 'low', 'normal' => 'medium', 'urgent' => 'high'];
+        $priorityMap = ['low' => 'low', 'normal' => 'medium', 'urgent' => 'high', 'emergency' => 'emergency'];
 
         $complaint = Complaint::create([
             'tenant_id' => $tenant->id,
@@ -106,12 +113,23 @@ class Create extends Component
             ]);
         }
 
+        // Phase 7B, F11: every maintenance notification used to be in-app
+        // only, regardless of severity — an emergency sitting unseen in a
+        // bell the landlord hasn't opened is not an adequate response. SMS
+        // was deliberately not added here: NotificationService's SMS channel
+        // only meters/debits a landlord's wallet when the *notifiable* is a
+        // Tenant (see resolveBillableLandlordId()) — a landlord themselves
+        // receiving an SMS bypasses that check entirely, which is not a
+        // reliable, cost-clear basis for firing SMS on every tenant-reported
+        // emergency. In-app + email only, until that's addressed.
+        $channels = $complaint->priority === 'emergency' ? ['in_app', 'email'] : ['in_app'];
+
         app(NotificationService::class)->notify(
             $tenancy->house->block->property->landlord,
             'complaint_submitted',
-            'New Maintenance Request',
+            $complaint->priority === 'emergency' ? 'EMERGENCY Maintenance Request' : 'New Maintenance Request',
             "{$tenant->name} ({$tenancy->house->house_number}) reported: {$this->subject}",
-            ['in_app'],
+            $channels,
             $complaint,
         );
 

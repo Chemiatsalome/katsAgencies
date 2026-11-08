@@ -31,15 +31,21 @@
 
                     <div>
                         <x-input-label value="Priority" />
-                        <div class="mt-1 flex gap-4 text-sm">
-                            @foreach (['low' => 'Low', 'normal' => 'Normal', 'urgent' => 'Urgent'] as $value => $label)
+                        <div class="mt-1 flex gap-4 text-sm flex-wrap">
+                            @foreach (['low' => 'Low', 'normal' => 'Normal', 'urgent' => 'Urgent', 'emergency' => 'Emergency'] as $value => $label)
                                 <label class="flex items-center gap-1.5">
-                                    <input type="radio" wire:model="priority" value="{{ $value }}" class="border-brand-border">
+                                    <input type="radio" wire:model.live="priority" value="{{ $value }}" class="border-brand-border">
                                     {{ $label }}
                                 </label>
                             @endforeach
                         </div>
                         <x-input-error :messages="$errors->get('priority')" class="mt-1" />
+                        @if ($priority === 'emergency')
+                            <div class="mt-2 text-xs text-warning bg-warning/5 border border-warning/30 rounded-md px-3 py-2">
+                                If this is a fire, gas leak, or an immediate danger to anyone's safety, call emergency services first.
+                                Marking this as an emergency notifies your landlord immediately by email as well as in the app.
+                            </div>
+                        @endif
                     </div>
 
                     <div>

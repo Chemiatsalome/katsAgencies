@@ -91,6 +91,131 @@ class TenantMaintenanceModuleTest extends TestCase
         ]);
     }
 
+    /** Phase 7B, F1: 'emergency' is now a reachable priority from the tenant's own form. */
+    public function test_tenant_can_submit_an_emergency_priority_request_and_it_persists(): void
+    {
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+
+        Livewire::actingAs($user)
+            ->test(Create::class)
+            ->set('category', 'electrical')
+            ->set('subject', 'Sparking outlet')
+            ->set('description', 'The kitchen outlet is sparking.')
+            ->set('priority', 'emergency')
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('complaints', [
+            'subject' => 'Sparking outlet',
+            'priority' => 'emergency',
+        ]);
+    }
+
+    /**
+     * Phase 7B, F11: an emergency complaint must notify the landlord via
+     * both in_app and email — exactly 2 AppNotification rows, one per
+     * channel, no more and no fewer (duplicate-delivery check), and the
+     * email actually dispatches.
+     */
+    public function test_an_emergency_complaint_notifies_the_landlord_via_in_app_and_email(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->with('house.block.property')->firstOrFail();
+        $landlord = $tenancy->house->block->property->landlord;
+
+        Livewire::actingAs($user)
+            ->test(Create::class)
+            ->set('category', 'water')
+            ->set('subject', 'Burst pipe flooding the kitchen')
+            ->set('description', 'Water everywhere, needs immediate attention.')
+            ->set('priority', 'emergency')
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $notifications = AppNotification::where('notifiable_type', $landlord->getMorphClass())
+            ->where('notifiable_id', $landlord->id)
+            ->where('event_type', 'complaint_submitted')
+            ->get();
+
+        $this->assertCount(2, $notifications);
+        $this->assertEqualsCanonicalizing(['in_app', 'email'], $notifications->pluck('channel')->all());
+        $this->assertTrue($notifications->every(fn ($n) => $n->status === 'sent'));
+
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\GenericNotificationMail::class, 1);
+    }
+
+    /** Regression: a non-emergency complaint must keep its original, unchanged in-app-only behavior. */
+    public function test_a_non_emergency_complaint_still_only_notifies_the_landlord_via_in_app(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->seed();
+
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->with('house.block.property')->firstOrFail();
+        $landlord = $tenancy->house->block->property->landlord;
+
+        Livewire::actingAs($user)
+            ->test(Create::class)
+            ->set('category', 'plumbing')
+            ->set('subject', 'Slow drain')
+            ->set('description', 'The bathroom sink drains slowly.')
+            ->set('priority', 'urgent')
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $notifications = AppNotification::where('notifiable_type', $landlord->getMorphClass())
+            ->where('notifiable_id', $landlord->id)
+            ->where('event_type', 'complaint_submitted')
+            ->get();
+
+        $this->assertCount(1, $notifications);
+        $this->assertEquals('in_app', $notifications->first()->channel);
+
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+    }
+
+    /**
+     * Phase 7B: a failed email delivery must not block the complaint from
+     * being recorded, must not throw back to the tenant, and must leave an
+     * accurate 'failed' status on that one notification row — the in_app
+     * row, a separate row entirely, is unaffected.
+     */
+    public function test_a_failed_emergency_email_does_not_block_submission_and_is_recorded_as_failed(): void
+    {
+        $this->seed();
+
+        \Illuminate\Support\Facades\Mail::shouldReceive('to')->once()->andReturnSelf();
+        \Illuminate\Support\Facades\Mail::shouldReceive('send')->once()->andThrow(new \Exception('SMTP connection refused'));
+
+        $user = $this->makeTenantUser();
+        $tenancy = $user->tenant->tenancies()->active()->with('house.block.property')->firstOrFail();
+        $landlord = $tenancy->house->block->property->landlord;
+
+        Livewire::actingAs($user)
+            ->test(Create::class)
+            ->set('category', 'structural')
+            ->set('subject', 'Ceiling collapsing')
+            ->set('description', 'Part of the ceiling has come down.')
+            ->set('priority', 'emergency')
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('complaints', ['subject' => 'Ceiling collapsing', 'priority' => 'emergency']);
+
+        $inApp = AppNotification::where('notifiable_type', $landlord->getMorphClass())
+            ->where('notifiable_id', $landlord->id)->where('channel', 'in_app')->where('event_type', 'complaint_submitted')->first();
+        $email = AppNotification::where('notifiable_type', $landlord->getMorphClass())
+            ->where('notifiable_id', $landlord->id)->where('channel', 'email')->where('event_type', 'complaint_submitted')->first();
+
+        $this->assertEquals('sent', $inApp->status);
+        $this->assertEquals('failed', $email->status);
+    }
+
     public function test_tenant_cannot_submit_without_an_active_tenancy(): void
     {
         $this->seed();

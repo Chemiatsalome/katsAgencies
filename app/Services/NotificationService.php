@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\GenericNotificationMail;
 use App\Models\AppNotification;
+use App\Models\Tenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -73,7 +74,7 @@ class NotificationService
 
     private function deliverEmail(AppNotification $notification, Model $notifiable): void
     {
-        $email = $notifiable->email ?? null;
+        $email = $this->resolveEmailAddress($notifiable);
 
         if (! $email) {
             $notification->update(['status' => 'failed']);
@@ -88,6 +89,34 @@ class NotificationService
             Log::warning('Notification email failed', ['notification_id' => $notification->id, 'error' => $e->getMessage()]);
             $notification->update(['status' => 'failed']);
         }
+    }
+
+    /**
+     * Phase 7B follow-up: tenants.email is an optional, landlord-entered
+     * contact field, entirely separate from — and never synced with — the
+     * tenant's actual portal-login email (tenants.user.email, set only by
+     * TenancyProvisioningService::createPortalAccount()). Reading
+     * $notifiable->email directly meant a tenant with working portal access
+     * but no separately-entered contact email silently received zero
+     * email-channel notifications, ever. Scoped strictly to Tenant — every
+     * other notifiable type (User, covering landlords/managers/admins)
+     * resolves exactly as before, unchanged.
+     */
+    private function resolveEmailAddress(Model $notifiable): ?string
+    {
+        if (! $notifiable instanceof Tenant) {
+            return $notifiable->email ?? null;
+        }
+
+        return $this->usableEmail($notifiable->email) ?? $this->usableEmail($notifiable->user?->email);
+    }
+
+    /** Null for blank/whitespace-only/malformed input — never attempts to send to something that isn't a real address. */
+    private function usableEmail(?string $email): ?string
+    {
+        $email = trim((string) $email);
+
+        return $email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
     }
 
     private function deliverSms(AppNotification $notification, Model $notifiable): void

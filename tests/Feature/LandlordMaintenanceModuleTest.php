@@ -74,6 +74,115 @@ class LandlordMaintenanceModuleTest extends TestCase
         ]);
     }
 
+    /**
+     * Phase 7B, finding 4: createTask() never notified anyone at all,
+     * including for a task logged at emergency priority directly against an
+     * occupied house — the tenant living there had no way to find out their
+     * landlord already knew. Scoped to emergency + a specific house only;
+     * verified via both channels, with no duplicate rows.
+     *
+     * This test explicitly sets tenants.email, which seeded tenants do not
+     * have by default — NotificationService::deliverEmail() reads the
+     * notifiable's own ->email attribute directly, and for a Tenant that is
+     * tenants.email specifically, not tenants.user.email (the separate
+     * portal-login account's email). The two are never kept in sync
+     * anywhere in the app (confirmed: TenancyProvisioningService::
+     * createPortalAccount() creates the User but never back-fills
+     * tenants.email). This is a genuine, pre-existing delivery gap — a
+     * tenant with working portal access but no separately-entered contact
+     * email silently never receives ANY email-channel notification —
+     * reported separately rather than fixed here, since it's well outside
+     * this phase's scope. Isolating it here so this test proves this
+     * phase's own notification-triggering logic, not that unrelated gap.
+     */
+    public function test_landlord_logging_an_emergency_task_for_an_occupied_house_notifies_the_active_tenant(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = \App\Models\Tenancy::active()
+            ->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))
+            ->with('house.block.property', 'tenant')
+            ->firstOrFail();
+        $tenancy->tenant->update(['email' => 'emergency-notify-tenant@example.test']);
+        $property = $tenancy->house->block->property;
+
+        Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
+            ->call('openTaskForm')
+            ->set('task_property_id', $property->id)
+            ->set('task_house_id', $tenancy->house_id)
+            ->set('task_title', 'Gas leak reported by neighbour')
+            ->set('task_category', 'gas')
+            ->set('task_priority', 'emergency')
+            ->call('createTask')
+            ->assertHasNoErrors();
+
+        $notifications = \App\Models\AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+            ->where('notifiable_id', $tenancy->tenant_id)
+            ->where('event_type', 'maintenance_status_submitted')
+            ->get();
+
+        $this->assertCount(2, $notifications);
+        $this->assertEqualsCanonicalizing(['in_app', 'email'], $notifications->pluck('channel')->all());
+        $this->assertTrue($notifications->every(fn ($n) => $n->status === 'sent'));
+
+        \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\GenericNotificationMail::class, 1);
+    }
+
+    /** Regression: a non-emergency, landlord-created task must keep its original, unchanged behavior — no tenant notification at all. */
+    public function test_landlord_logging_a_non_emergency_task_for_an_occupied_house_does_not_notify_the_tenant(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = \App\Models\Tenancy::active()
+            ->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))
+            ->with('house.block.property', 'tenant')
+            ->firstOrFail();
+        $property = $tenancy->house->block->property;
+
+        Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
+            ->call('openTaskForm')
+            ->set('task_property_id', $property->id)
+            ->set('task_house_id', $tenancy->house_id)
+            ->set('task_title', 'Routine gutter cleaning')
+            ->set('task_category', 'general')
+            ->set('task_priority', 'medium')
+            ->call('createTask')
+            ->assertHasNoErrors();
+
+        $this->assertEquals(0, \App\Models\AppNotification::where('notifiable_type', $tenancy->tenant->getMorphClass())
+            ->where('notifiable_id', $tenancy->tenant_id)->count());
+
+        \Illuminate\Support\Facades\Mail::assertNothingSent();
+    }
+
+    /** An emergency task logged property-wide (no specific house) has no single tenant to notify — must not error. */
+    public function test_landlord_logging_an_emergency_task_with_no_house_does_not_error_or_notify_anyone(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(MaintenanceIndex::class, ['tab' => 'scheduled'])
+            ->call('openTaskForm')
+            ->set('task_property_id', $property->id)
+            ->set('task_title', 'Main water supply emergency')
+            ->set('task_category', 'water')
+            ->set('task_priority', 'emergency')
+            ->call('createTask')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('maintenance_tasks', ['title' => 'Main water supply emergency', 'priority' => 'emergency']);
+        $this->assertEquals(0, \App\Models\AppNotification::where('event_type', 'maintenance_status_submitted')->count());
+    }
+
     public function test_a_tenant_complaint_can_be_converted_to_a_maintenance_task(): void
     {
         $this->seed();

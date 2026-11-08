@@ -181,7 +181,7 @@ class Index extends Component
         $property = Property::findOrFail($data['task_property_id']);
         $this->authorize('update', $property);
 
-        MaintenanceTask::create([
+        $task = MaintenanceTask::create([
             'property_id' => $property->id,
             'house_id' => $data['task_house_id'] ?: null,
             'block_id' => $data['task_house_id'] ? House::find($data['task_house_id'])->block_id : null,
@@ -192,6 +192,23 @@ class Index extends Component
             'status' => 'submitted',
             'created_by' => Auth::id(),
         ]);
+
+        // Phase 7B, finding 4: a landlord/manager logging a task directly
+        // (not via a tenant's own complaint) never notified anyone at all —
+        // for an ordinary task that's fine (nothing's happened yet from the
+        // tenant's side), but for one logged at emergency priority, the
+        // tenant living there has no other way to find out their landlord
+        // already knows and is acting on it. Scoped tightly to emergency +
+        // a specific house (a property-wide task has no single tenant to
+        // notify, same as every other call site here); never fires for
+        // low/medium/high, which is unchanged, existing behavior.
+        if ($task->priority === 'emergency' && $task->house_id) {
+            $this->notifyTenantOfStatusChange(
+                $task,
+                "Your landlord has logged an emergency maintenance issue for your unit: {$task->title}. They are aware and will be in touch shortly.",
+                ['in_app', 'email'],
+            );
+        }
 
         $this->showTaskForm = false;
         session()->flash('status', 'Maintenance task logged.');
@@ -366,7 +383,14 @@ class Index extends Component
      * who needs to know a vendor is coming. A property-wide task (no
      * house_id) still has no single tenant to notify.
      */
-    private function notifyTenantOfStatusChange(MaintenanceTask $task, string $message): void
+    /**
+     * @param  string[]  $channels  Phase 7B, F11: defaults to in_app only,
+     *                              unchanged for every existing call site —
+     *                              createTask() is the only caller that ever
+     *                              passes ['in_app', 'email'], for an
+     *                              emergency-priority task it just logged.
+     */
+    private function notifyTenantOfStatusChange(MaintenanceTask $task, string $message, array $channels = ['in_app']): void
     {
         $tenants = collect([$task->complaint?->tenant]);
 
@@ -384,7 +408,7 @@ class Index extends Component
                 'maintenance_status_'.$task->status,
                 'Maintenance Request Update',
                 $message,
-                ['in_app'],
+                $channels,
                 $task,
             );
         }
