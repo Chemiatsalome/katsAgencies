@@ -16,7 +16,10 @@
     $rentActionCount = $tenant ? $pendingActions->tenantOverdueChargesCount($tenant) : 0;
     $depositActionCount = $tenant ? $pendingActions->tenantDepositOutstandingCount($tenant) : 0;
     $requestsActionCount = $tenant ? $pendingActions->tenantAwaitingConfirmationCount($tenant) : 0;
-    $tenantNotificationsActionCount = $tenant ? $pendingActions->tenantUnreadNotificationsCount($tenant) : 0;
+    // Phase 8D: the Notifications/Announcements badges are rendered by
+    // their own nested Livewire components (NotificationsBadge,
+    // AnnouncementsBadge) instead of a plain count baked in here — see
+    // their docblocks for why, given this whole partial is @persist'd.
     $tenancyNoticeActionCount = $tenant ? $pendingActions->tenantTenancyNoticeActionCount($tenant)
         + $pendingActions->tenantRenewalRequestActionCount($tenant) : 0;
     $contractActionCount = $tenant ? $pendingActions->tenantContractAwaitingSignatureCount($tenant) : 0;
@@ -154,14 +157,15 @@
                class="flex items-center gap-3 px-4 py-2 text-sm">
                 <x-nav-icon name="notifications" class="h-5 w-5 shrink-0" />
                 <span x-show="!collapsed" x-cloak class="flex-1">Notifications</span>
-                <span x-show="!collapsed" x-cloak><x-nav-badge :count="$tenantNotificationsActionCount" /></span>
+                <span x-show="!collapsed" x-cloak><livewire:tenant.notifications-badge /></span>
             </a>
             @if (\Illuminate\Support\Facades\Route::has('tenant.announcements.index'))
                 <a href="{{ route('tenant.announcements.index') }}" wire:navigate
                    :class="isActive('{{ route('tenant.announcements.index', absolute: false) }}') ? 'bg-white/10 text-white border-r-2 border-gold' : 'text-white/70 hover:text-white hover:bg-white/5'"
                    class="flex items-center gap-3 px-4 py-2 text-sm">
                     <x-nav-icon name="audit" class="h-5 w-5 shrink-0" />
-                    <span x-show="!collapsed" x-cloak>Announcements</span>
+                    <span x-show="!collapsed" x-cloak class="flex-1">Announcements</span>
+                    <span x-show="!collapsed" x-cloak><livewire:tenant.announcements-badge /></span>
                 </a>
             @endif
         </x-nav-group>

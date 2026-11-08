@@ -58,7 +58,17 @@ class Index extends Component
         // Unlike the general Notifications inbox, announcements have no
         // per-item "mark read" control — simply viewing this list is the
         // read action, otherwise read_at could never be set here at all.
-        (clone $query)->whereNull('read_at')->update(['read_at' => now()]);
+        $markedCount = (clone $query)->whereNull('read_at')->update(['read_at' => now()]);
+
+        // Phase 8D: only fire when something actually changed — render()
+        // runs on every Livewire update, not just the first page view, so
+        // dispatching unconditionally here would fire repeatedly for
+        // nothing. Refreshes the sidebar's Announcements badge — see
+        // AnnouncementsBadge's own docblock for why a plain re-render here
+        // alone wouldn't reach it (the sidebar is @persist'd).
+        if ($markedCount > 0) {
+            $this->dispatch('tenant-notifications-updated');
+        }
 
         $announcements = $query->with('related.replies.user')->latest()->paginate(15);
 

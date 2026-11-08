@@ -194,11 +194,29 @@ class PendingActionsService
         return $contract && ! $contract->isSuperseded() && in_array($contract->status, ['sent', 'awaiting_signature'], true) ? 1 : 0;
     }
 
-    /** Unread notifications for a tenant — mirrors Tenant\NotificationBell. */
+    /**
+     * Unread notifications for a tenant, for the Notifications nav badge —
+     * mirrors Tenant\Notifications\Index::scopedQuery(). Deliberately
+     * excludes landlord_message (announcements) — see
+     * tenantUnreadAnnouncementsCount() for that count's own badge. Note
+     * this is NOT what Tenant\NotificationBell shows: the bell keeps
+     * counting every type, announcements included, by design (Phase 8D).
+     */
     public function tenantUnreadNotificationsCount(Tenant $tenant): int
     {
         return AppNotification::where('notifiable_type', $tenant->getMorphClass())
             ->where('notifiable_id', $tenant->id)
+            ->where('event_type', '!=', 'landlord_message')
+            ->whereNull('read_at')
+            ->count();
+    }
+
+    /** Unread landlord_message notifications (announcements) for a tenant, for the Announcements nav badge. */
+    public function tenantUnreadAnnouncementsCount(Tenant $tenant): int
+    {
+        return AppNotification::where('notifiable_type', $tenant->getMorphClass())
+            ->where('notifiable_id', $tenant->id)
+            ->where('event_type', 'landlord_message')
             ->whereNull('read_at')
             ->count();
     }
