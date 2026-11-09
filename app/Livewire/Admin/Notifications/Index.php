@@ -18,6 +18,14 @@ class Index extends Component
 
     public string $status = 'all';
 
+    /**
+     * G-1B: a dedicated toggle rather than overloading the existing status
+     * filter — `submission_unknown` lives in delivery_status, not status,
+     * and this filter needs to force the channel too (unresolved email
+     * only makes sense scoped to channel='email').
+     */
+    public bool $onlyUnresolvedEmail = false;
+
     public function markRead(int $notificationId): void
     {
         $this->myNotifications()->where('id', $notificationId)->update(['read_at' => now()]);
@@ -36,13 +44,15 @@ class Index extends Component
     public function render()
     {
         $query = AppNotification::with('notifiable')
-            ->when($this->channel !== 'all', fn ($q) => $q->where('channel', $this->channel))
-            ->when($this->status !== 'all', fn ($q) => $q->where('status', $this->status))
+            ->when($this->onlyUnresolvedEmail, fn ($q) => $q->unresolvedEmail())
+            ->when(! $this->onlyUnresolvedEmail && $this->channel !== 'all', fn ($q) => $q->where('channel', $this->channel))
+            ->when(! $this->onlyUnresolvedEmail && $this->status !== 'all', fn ($q) => $q->where('status', $this->status))
             ->latest();
 
         return view('livewire.admin.notifications.index', [
             'notifications' => $query->paginate(25),
             'myUnreadCount' => $this->myNotifications()->whereNull('read_at')->count(),
+            'unresolvedEmailCount' => AppNotification::unresolvedEmail()->count(),
         ]);
     }
 }

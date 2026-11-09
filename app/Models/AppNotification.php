@@ -15,7 +15,7 @@ use Spatie\Activitylog\Traits\LogsActivity;
     'notifiable_type', 'notifiable_id', 'channel', 'event_type', 'title', 'body',
     'status', 'related_type', 'related_id', 'sent_at', 'read_at',
     'delivery_status', 'billing_status', 'submission_token', 'submission_started_at', 'submission_attempt',
-    'reconciliation_note', 'reconciled_at', 'reconciled_by',
+    'reconciliation_note', 'reconciled_at', 'reconciled_by', 'provider_message_id',
 ])]
 class AppNotification extends Model
 {
@@ -63,6 +63,18 @@ class AppNotification extends Model
         return $query->where('channel', 'sms')
             ->where(fn ($q) => $q->where('delivery_status', 'submission_unknown')
                 ->orWhere('billing_status', 'reconciliation_required'));
+    }
+
+    /**
+     * G-1B: an email notification whose SMTP submission outcome was never
+     * confirmed one way or the other — never a failure (that's a definite,
+     * known outcome) and never resubmitted automatically. Unlike SMS,
+     * there's no billing_status dimension to also check here — email has
+     * no cost, so a confirmed `sent` email has nothing further to resolve.
+     */
+    public function scopeUnresolvedEmail(Builder $query): Builder
+    {
+        return $query->where('channel', 'email')->where('delivery_status', 'submission_unknown');
     }
 
     public function notifiable(): MorphTo

@@ -50,7 +50,15 @@ return [
             'port' => env('MAIL_PORT', 2525),
             'username' => env('MAIL_USERNAME'),
             'password' => env('MAIL_PASSWORD'),
-            'timeout' => null,
+            // G-1B: previously unbounded, the same unbounded-hang risk G-1A
+            // found and fixed for the SMS provider. Confirmed via
+            // Laravel's MailManager::configureSmtpTransport() and Symfony's
+            // SocketStream: this single value bounds both the initial
+            // stream_socket_client() connection attempt and every
+            // subsequent stream_set_timeout()-governed read/write — Symfony
+            // exposes exactly one timeout knob here, not a separate
+            // connect-vs-overall pair the way Guzzle (used for SMS) does.
+            'timeout' => (int) env('MAIL_TIMEOUT', 5),
             'local_domain' => env('MAIL_EHLO_DOMAIN', parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST)),
         ],
 

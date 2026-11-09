@@ -185,7 +185,15 @@ class TenantMaintenanceModuleTest extends TestCase
      * accurate 'failed' status on that one notification row — the in_app
      * row, a separate row entirely, is unaffected.
      */
-    public function test_a_failed_emergency_email_does_not_block_submission_and_is_recorded_as_failed(): void
+    /**
+     * G-1B: a generic exception during SMTP submission (here, a simulated
+     * connection refusal) carries no SMTP response code and is therefore
+     * genuinely ambiguous, not a confirmed failure — see
+     * NotificationService::classifyMailException(). It's recorded as
+     * delivery_status='submission_unknown' rather than status='failed';
+     * the complaint submission itself must still never be blocked by it.
+     */
+    public function test_an_ambiguous_emergency_email_failure_does_not_block_submission_and_is_recorded_as_submission_unknown(): void
     {
         $this->seed();
 
@@ -213,7 +221,11 @@ class TenantMaintenanceModuleTest extends TestCase
             ->where('notifiable_id', $landlord->id)->where('channel', 'email')->where('event_type', 'complaint_submitted')->first();
 
         $this->assertEquals('sent', $inApp->status);
-        $this->assertEquals('failed', $email->status);
+        // Ambiguous, not a confirmed failure — status keeps its old
+        // meaning ('pending', which scopeNeedsAttention() still surfaces);
+        // delivery_status is where the ambiguity is actually recorded.
+        $this->assertEquals('pending', $email->status);
+        $this->assertEquals('submission_unknown', $email->delivery_status);
     }
 
     public function test_tenant_cannot_submit_without_an_active_tenancy(): void

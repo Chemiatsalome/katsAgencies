@@ -30,6 +30,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // a periodic sweep rather than relying on anything to retry itself.
         $schedule->command('notifications:reconcile-sms')->everyFifteenMinutes();
 
+        // G-1B: same stale-claim risk as SMS, minus the billing-resume step
+        // — email has no cost dimension to recover.
+        $schedule->command('notifications:reconcile-email')->everyFifteenMinutes();
+
         $schedule->command('notifications:rent-reminders')->dailyAt('07:00');
         $schedule->command('notifications:contract-expiry')->dailyAt('07:15');
         $schedule->command('notifications:renewal-reminders')->dailyAt('07:30');
