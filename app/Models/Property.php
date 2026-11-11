@@ -23,9 +23,51 @@ class Property extends Model
 
     /** Centralized so Properties\Form and Properties\Wizard validate against the exact same list, instead of two hardcoded 'in:...' strings drifting apart. */
     public const TYPES = [
-        'apartment', 'residential_compound', 'individual_house', 'maisonette',
-        'commercial_building', 'mixed_use', 'villas', 'other',
+        'apartment', 'flats', 'residential_compound', 'individual_house', 'maisonette',
+        'commercial_building', 'shopping_mall', 'office_building', 'mixed_use', 'villas', 'other',
     ];
+
+    /**
+     * The general-category selector shown before Properties\Wizard's own
+     * step 1 — purely a UI funnel for which TYPES options get offered
+     * there, never stored on the Property itself (a landlord's next
+     * property can freely be a different category; nothing here restricts
+     * their portfolio). 'other' deliberately has no category — it's always
+     * offered in step 1 regardless of which category was picked, so an
+     * edge case never gets blocked by this list being incomplete.
+     */
+    public const CATEGORIES = ['residential', 'commercial', 'office', 'mixed_use'];
+
+    /** category => which TYPES values that category's step 1 offers (plus 'other', always appended by the caller). */
+    public const CATEGORY_TYPES = [
+        'residential' => ['apartment', 'flats', 'individual_house', 'maisonette', 'villas', 'residential_compound'],
+        'commercial' => ['shopping_mall', 'commercial_building'],
+        'office' => ['office_building'],
+        'mixed_use' => ['mixed_use'],
+    ];
+
+    /** Nicer, category-wishlist-matching labels for the handful of types whose auto-generated Str::headline() reading is less clear than the value itself. Anything not listed here just falls back to Str::headline(). */
+    public const TYPE_LABELS = [
+        'individual_house' => 'House',
+        'residential_compound' => 'Residential Estate',
+        'shopping_mall' => 'Shopping Mall / Centre',
+        'office_building' => 'Office Building / Complex',
+        'commercial_building' => 'Commercial / Retail Building',
+        'mixed_use' => 'Mixed-use Development',
+    ];
+
+    public static function typeLabel(string $type): string
+    {
+        return self::TYPE_LABELS[$type] ?? \Illuminate\Support\Str::headline($type);
+    }
+
+    /** @return string[] TYPES values to offer for this category, 'other' always appended last. Unknown/blank category = every TYPES value (today's unfiltered behaviour). */
+    public static function typesForCategory(string $category): array
+    {
+        $types = self::CATEGORY_TYPES[$category] ?? null;
+
+        return $types === null ? self::TYPES : [...$types, 'other'];
+    }
 
     protected static function booted(): void
     {

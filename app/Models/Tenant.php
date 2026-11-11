@@ -12,7 +12,7 @@ use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
 
 #[Fillable([
-    'user_id', 'name', 'phone', 'email', 'id_number',
+    'user_id', 'name', 'business_name', 'phone', 'email', 'id_number',
     'emergency_contact_name', 'emergency_contact_phone', 'payment_due_day', 'notes',
     'portal_invite_token', 'portal_invite_sent_at',
 ])]
@@ -189,7 +189,7 @@ class Tenant extends Model
     public function getActivitylogOptions(): LogOptions
     {
         return LogOptions::defaults()
-            ->logOnly(['name', 'phone', 'email', 'payment_due_day'])
+            ->logOnly(['name', 'phone', 'email', 'emergency_contact_name', 'emergency_contact_phone', 'payment_due_day'])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
     }

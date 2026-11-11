@@ -62,7 +62,7 @@
                     <p class="text-sm text-brand-slate">
                         You're logged in as <span class="font-medium text-charcoal">{{ auth()->user()->name }}</span>.
                     </p>
-                    <x-primary-button wire:click="acceptAsCurrentTenant" type="button">Accept Invitation</x-primary-button>
+                    <x-loading-button wire:click="acceptAsCurrentTenant" type="button" target="acceptAsCurrentTenant" loading-text="Accepting…">Accept Invitation</x-loading-button>
                 </div>
             @else
                 <div class="text-sm text-brand-slate space-y-2">
@@ -98,6 +98,12 @@
                     </div>
 
                     <div>
+                        <x-input-label for="business_name" value="Business Name (optional)" />
+                        <x-text-input id="business_name" type="text" wire:model="business_name" class="mt-1 block w-full" placeholder="If you're moving into a shop, stall or office" />
+                        <x-input-error :messages="$errors->get('business_name')" class="mt-1" />
+                    </div>
+
+                    <div>
                         <x-input-label for="id_number" value="National ID / Passport Number (optional)" />
                         <x-text-input id="id_number" type="text" wire:model="id_number" class="mt-1 block w-full" />
                         <x-input-error :messages="$errors->get('id_number')" class="mt-1" />
@@ -126,7 +132,7 @@
                         <x-text-input id="password_confirmation" type="password" wire:model="password_confirmation" class="mt-1 block w-full" />
                     </div>
 
-                    <x-primary-button type="submit" class="w-full justify-center">Create Account &amp; Submit Registration</x-primary-button>
+                    <x-loading-button type="submit" class="w-full justify-center" target="register" loading-text="Creating your account…">Create Account &amp; Submit Registration</x-loading-button>
 
                     <p class="text-center text-sm text-brand-slate">
                         Already have an account?
@@ -148,7 +154,7 @@
                         <x-input-error :messages="$errors->get('login_password')" class="mt-1" />
                     </div>
 
-                    <x-primary-button type="submit" class="w-full justify-center">Log In &amp; Accept Invitation</x-primary-button>
+                    <x-loading-button type="submit" class="w-full justify-center" target="logInAndAccept" loading-text="Logging in…">Log In &amp; Accept Invitation</x-loading-button>
 
                     <p class="text-center text-sm text-brand-slate">
                         <button type="button" wire:click="switchToRegister" class="text-teal hover:underline">Back to registration</button>

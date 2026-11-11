@@ -40,20 +40,152 @@ class TenantInvitationModuleTest extends TestCase
             ->set('property_id', $house->block->property_id)
             ->set('block_id', $house->block_id)
             ->set('house_id', $house->id)
-            ->call('goToStep2')
-            ->assertSet('step', 2)
             ->set('monthly_rent', '12000')
             ->set('deposit_required', '12000')
             ->set('rent_due_day', 5)
             ->set('move_in_date', now()->format('Y-m-d'))
             ->call('generate')
-            ->assertSet('step', 3)
             ->assertHasNoErrors();
 
         $this->assertEquals('reserved', $house->fresh()->status);
         $this->assertDatabaseHas('tenant_invitations', [
             'house_id' => $house->id,
             'status' => 'pending',
+        ]);
+    }
+
+    /**
+     * Regression/feature test: Invite Tenant was rebuilt to adopt Add
+     * Tenant's "Deposit Paid" preset+summary UI, backed by two new columns
+     * on tenant_invitations (initial_deposit_paid, deposit_method) that
+     * flow straight into TenancyProvisioningService's existing
+     * DepositPayment-creation branch once the invitation is accepted —
+     * covering the zero/full/partial scenarios the deposit UI offers.
+     */
+    public function test_a_deposit_already_collected_before_inviting_a_tenant_flows_through_to_the_resulting_tenancy(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = $this->vacantHouseFor($landlord);
+
+        Livewire::actingAs($landlord)
+            ->test(Create::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('monthly_rent', '20000')
+            ->set('deposit_required', '20000')
+            ->set('rent_due_day', 5)
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('deposit_option', 'full')
+            ->set('deposit_method', 'mpesa')
+            ->call('generate')
+            ->assertHasNoErrors();
+
+        $invitation = TenantInvitation::where('house_id', $house->id)->firstOrFail();
+        $this->assertEquals(20000, (float) $invitation->initial_deposit_paid);
+        $this->assertEquals('mpesa', $invitation->deposit_method);
+
+        Livewire::test(Accept::class, ['token' => $invitation->token])
+            ->set('name', 'Deposit Already Paid')
+            ->set('phone', '0711000222')
+            ->set('email', 'deposit.already.paid@example.test')
+            ->set('password', 'password123')
+            ->set('password_confirmation', 'password123')
+            ->call('register')
+            ->assertHasNoErrors();
+
+        $tenant = Tenant::where('email', 'deposit.already.paid@example.test')->firstOrFail();
+        $tenancy = $tenant->tenancies()->firstOrFail();
+
+        $this->assertDatabaseHas('deposit_payments', [
+            'tenancy_id' => $tenancy->id,
+            'amount' => 20000,
+            'method' => 'mpesa',
+            'recorded_by' => $landlord->id,
+        ]);
+    }
+
+    public function test_no_deposit_payment_is_recorded_when_nothing_was_collected_before_the_invitation(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = $this->vacantHouseFor($landlord);
+
+        Livewire::actingAs($landlord)
+            ->test(Create::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('monthly_rent', '15000')
+            ->set('deposit_required', '15000')
+            ->set('rent_due_day', 5)
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->call('generate')
+            ->assertHasNoErrors();
+
+        $invitation = TenantInvitation::where('house_id', $house->id)->firstOrFail();
+        $this->assertEquals(0, (float) $invitation->initial_deposit_paid);
+
+        Livewire::test(Accept::class, ['token' => $invitation->token])
+            ->set('name', 'No Deposit Yet')
+            ->set('phone', '0711000333')
+            ->set('email', 'no.deposit.yet@example.test')
+            ->set('password', 'password123')
+            ->set('password_confirmation', 'password123')
+            ->call('register')
+            ->assertHasNoErrors();
+
+        $tenant = Tenant::where('email', 'no.deposit.yet@example.test')->firstOrFail();
+        $tenancy = $tenant->tenancies()->firstOrFail();
+
+        $this->assertDatabaseMissing('deposit_payments', ['tenancy_id' => $tenancy->id]);
+    }
+
+    public function test_a_partial_deposit_paid_before_inviting_a_tenant_flows_through_to_the_resulting_tenancy(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = $this->vacantHouseFor($landlord);
+
+        Livewire::actingAs($landlord)
+            ->test(Create::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('monthly_rent', '18000')
+            ->set('deposit_required', '18000')
+            ->set('rent_due_day', 5)
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('deposit_option', 'custom')
+            ->set('initial_deposit_paid', '5000')
+            ->set('deposit_method', 'cash')
+            ->call('generate')
+            ->assertHasNoErrors();
+
+        $invitation = TenantInvitation::where('house_id', $house->id)->firstOrFail();
+        $this->assertEquals(5000, (float) $invitation->initial_deposit_paid);
+
+        Livewire::test(Accept::class, ['token' => $invitation->token])
+            ->set('name', 'Partial Deposit Paid')
+            ->set('phone', '0711000444')
+            ->set('email', 'partial.deposit.paid@example.test')
+            ->set('password', 'password123')
+            ->set('password_confirmation', 'password123')
+            ->call('register')
+            ->assertHasNoErrors();
+
+        $tenant = Tenant::where('email', 'partial.deposit.paid@example.test')->firstOrFail();
+        $tenancy = $tenant->tenancies()->firstOrFail();
+
+        $this->assertDatabaseHas('deposit_payments', [
+            'tenancy_id' => $tenancy->id,
+            'amount' => 5000,
+            'method' => 'cash',
+            'recorded_by' => $landlord->id,
         ]);
     }
 
@@ -99,6 +231,39 @@ class TenantInvitationModuleTest extends TestCase
         $this->assertEquals($house->id, $tenancy->house_id);
         $this->assertEquals('active', $tenancy->status);
         $this->assertEquals(14000, (float) $tenancy->monthly_rent);
+    }
+
+    /** Optional business name (part D of the property-category work), captured on self-registration through an invitation — never required. */
+    public function test_a_tenant_can_record_an_optional_business_name_while_self_registering(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = $this->vacantHouseFor($landlord);
+
+        $invitation = TenantInvitation::create([
+            'house_id' => $house->id,
+            'invited_by' => $landlord->id,
+            'token' => TenantInvitation::generateToken(),
+            'monthly_rent' => 18000,
+            'deposit_required' => 18000,
+            'rent_due_day' => 1,
+            'move_in_date' => now()->format('Y-m-d'),
+            'status' => 'pending',
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        Livewire::test(Accept::class, ['token' => $invitation->token])
+            ->set('name', 'Stall Vendor')
+            ->set('business_name', 'Fresh Produce Stall')
+            ->set('phone', '0711000555')
+            ->set('email', 'fresh.produce.stall@example.test')
+            ->set('password', 'password123')
+            ->set('password_confirmation', 'password123')
+            ->call('register')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('tenants', ['name' => 'Stall Vendor', 'business_name' => 'Fresh Produce Stall']);
     }
 
     public function test_existing_tenant_can_log_in_and_accept_a_second_tenancy_preserving_history(): void

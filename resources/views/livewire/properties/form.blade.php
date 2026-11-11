@@ -35,14 +35,9 @@
                         <div>
                             <x-input-label for="type" value="Property Type" />
                             <select id="type" wire:model="type" class="mt-1 block w-full rounded-md border-brand-border">
-                                <option value="apartment">Apartment</option>
-                                <option value="residential_compound">Residential Compound</option>
-                                <option value="individual_house">Individual House</option>
-                                <option value="maisonette">Maisonette</option>
-                                <option value="villas">Villas</option>
-                                <option value="commercial_building">Commercial Building</option>
-                                <option value="mixed_use">Mixed Use</option>
-                                <option value="other">Other</option>
+                                @foreach ($propertyTypes as $value)
+                                    <option value="{{ $value }}">{{ \App\Models\Property::typeLabel($value) }}</option>
+                                @endforeach
                             </select>
                             <x-input-error :messages="$errors->get('type')" class="mt-1" />
                         </div>

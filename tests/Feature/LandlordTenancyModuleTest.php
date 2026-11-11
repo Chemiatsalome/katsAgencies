@@ -6,10 +6,13 @@ use App\Livewire\Applications\Form as ApplicationForm;
 use App\Livewire\Applications\Show as ApplicationShow;
 use App\Livewire\Tenancies\Form as TenancyForm;
 use App\Livewire\Tenancies\Show as TenancyShow;
+use App\Livewire\Tenants\Form as TenantsForm;
 use App\Livewire\Tenants\Index as TenantsIndex;
+use App\Models\AppNotification;
 use App\Models\Application;
 use App\Models\House;
 use App\Models\Payment;
+use App\Models\RentCharge;
 use App\Models\Tenancy;
 use App\Models\Tenant;
 use App\Models\User;
@@ -33,6 +36,61 @@ class LandlordTenancyModuleTest extends TestCase
                 ->get(route('manage.tenants.show', $tenant).'?tab='.$tab)
                 ->assertOk();
         }
+    }
+
+    // --- Phase 9: landlord-side tenant phone validation ---------------------------------
+
+    public function test_an_invalid_phone_number_is_rejected_on_the_landlord_tenant_form(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenant = Tenant::whereHas('tenancies.house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $originalPhone = $tenant->phone;
+
+        Livewire::actingAs($landlord)
+            ->test(TenantsForm::class, ['tenant' => $tenant])
+            ->set('phone', 'not-a-phone-number')
+            ->call('save')
+            ->assertHasErrors('phone');
+
+        $this->assertEquals($originalPhone, $tenant->fresh()->phone);
+    }
+
+    /** A genuinely valid Kenyan mobile number, in the common 07xx local format, must still be accepted. */
+    public function test_a_valid_kenyan_phone_number_is_accepted_on_the_landlord_tenant_form(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenant = Tenant::whereHas('tenancies.house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(TenantsForm::class, ['tenant' => $tenant])
+            ->set('phone', '0722334455')
+            ->call('save')
+            ->assertHasNoErrors('phone');
+
+        $this->assertEquals('0722334455', $tenant->fresh()->phone);
+    }
+
+    /** Optional business name (part D of the property-category work) on the standalone Tenants\Form, never required. */
+    public function test_a_new_standalone_tenants_optional_business_name_is_saved_when_provided(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(TenantsForm::class)
+            ->set('name', 'Office Tenant')
+            ->set('business_name', 'Acme Consulting Ltd')
+            ->set('phone', '0722998877')
+            ->set('payment_due_day', 1)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('tenants', ['name' => 'Office Tenant', 'business_name' => 'Acme Consulting Ltd']);
     }
 
     /**
@@ -130,6 +188,66 @@ class LandlordTenancyModuleTest extends TestCase
         $this->assertEquals('active', $tenancy->status);
         $this->assertEquals($vacantHouse->id, $tenancy->house_id);
         $this->assertEquals('occupied', $vacantHouse->fresh()->status);
+    }
+
+    // --- Phase 10: application phone validation and format-tolerant tenant matching ----
+
+    public function test_an_invalid_applicant_phone_is_rejected_on_the_application_form(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+        $vacantHouse = House::whereHas('block', fn ($q) => $q->where('property_id', $property->id))->vacant()->first();
+
+        Livewire::actingAs($landlord)
+            ->test(ApplicationForm::class)
+            ->set('desired_property_id', $property->id)
+            ->set('desired_house_id', $vacantHouse->id)
+            ->set('applicant_name', 'Bad Phone Applicant')
+            ->set('applicant_phone', 'not-a-phone-number')
+            ->call('save')
+            ->assertHasErrors('applicant_phone');
+
+        $this->assertDatabaseMissing('applications', ['applicant_name' => 'Bad Phone Applicant']);
+    }
+
+    /**
+     * The approved applicant's phone is stored in a different raw format
+     * from an existing Tenant's own phone — approval must match the
+     * existing tenant rather than create a duplicate.
+     */
+    public function test_approving_an_application_matches_an_existing_tenant_with_a_differently_formatted_phone(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $property = $landlord->properties()->firstOrFail();
+        $vacantHouse = House::whereHas('block', fn ($q) => $q->where('property_id', $property->id))->vacant()->first();
+
+        $existingTenant = Tenant::create(['name' => 'Returning Tenant', 'phone' => '+254744556677', 'payment_due_day' => 1]);
+
+        $application = Application::create([
+            'desired_property_id' => $property->id,
+            'desired_house_id' => $vacantHouse->id,
+            'applicant_name' => 'Returning Tenant',
+            'applicant_phone' => '0744556677',
+            'application_date' => now()->format('Y-m-d'),
+            'status' => 'submitted',
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(ApplicationShow::class, ['application' => $application])
+            ->set('house_id', $vacantHouse->id)
+            ->set('monthly_rent', $vacantHouse->monthly_rent)
+            ->set('deposit_required', $vacantHouse->deposit_amount)
+            ->call('approveAndConvert')
+            ->assertHasNoErrors();
+
+        $this->assertEquals(1, Tenant::where('name', 'Returning Tenant')->count(), 'Must reuse the existing tenant, not create a duplicate.');
+
+        $tenancy = Tenancy::find($application->fresh()->converted_tenancy_id);
+        $this->assertEquals($existingTenant->id, $tenancy->tenant_id);
     }
 
     public function test_ending_a_tenancy_as_terminated_requires_a_reason_and_records_it(): void
@@ -319,6 +437,217 @@ class LandlordTenancyModuleTest extends TestCase
         $component->call('save')->assertHasErrors('house_id');
 
         $this->assertDatabaseMissing('tenancies', ['house_id' => $house->id, 'tenant_id' => $tenant->id]);
+    }
+
+    // --- Phase 10: inline new-tenant phone validation on the tenancy form --------------
+
+    public function test_an_invalid_phone_is_rejected_when_creating_a_tenancy_with_a_new_inline_tenant(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyForm::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('newTenant', true)
+            ->set('new_tenant_name', 'Bad Phone Tenant')
+            ->set('new_tenant_phone', 'not-a-phone-number')
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('monthly_rent', '15000')
+            ->set('deposit_required', '15000')
+            ->set('rent_due_day', 1)
+            ->call('save')
+            ->assertHasErrors('new_tenant_phone');
+
+        $this->assertDatabaseMissing('tenants', ['name' => 'Bad Phone Tenant']);
+    }
+
+    /** A genuinely valid Kenyan mobile number must still be accepted. */
+    public function test_a_valid_phone_is_accepted_when_creating_a_tenancy_with_a_new_inline_tenant(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyForm::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('newTenant', true)
+            ->set('new_tenant_name', 'Good Phone Tenant')
+            ->set('new_tenant_phone', '0733445566')
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('monthly_rent', '15000')
+            ->set('deposit_required', '15000')
+            ->set('rent_due_day', 1)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('tenants', ['name' => 'Good Phone Tenant', 'phone' => '0733445566']);
+    }
+
+    /** Optional business name (part D of the property-category work) — never required, and blank stays null rather than an empty string. */
+    public function test_a_new_inline_tenants_optional_business_name_is_saved_when_provided(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyForm::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('newTenant', true)
+            ->set('new_tenant_name', 'Shop Owner Tenant')
+            ->set('new_tenant_business_name', "Mama Chips' Kiosk")
+            ->set('new_tenant_phone', '0733445577')
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('monthly_rent', '15000')
+            ->set('deposit_required', '15000')
+            ->set('rent_due_day', 1)
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('tenants', ['name' => 'Shop Owner Tenant', 'business_name' => "Mama Chips' Kiosk"]);
+    }
+
+    /**
+     * Real-world bug: picking a month preset (e.g. "3 months") computed
+     * notice_period_days via diffInDays() without forcing it absolute —
+     * Carbon's default there is signed, not always-positive, so the later
+     * date diffed against the earlier move-in date came out negative
+     * (e.g. -92), which then failed the field's own 'min:0' validation
+     * rule on save.
+     */
+    /**
+     * A tenant added directly via the "Move In Tenant" form has a Tenant
+     * row but no linked User — they have no way to log in to the portal
+     * until a landlord sends them an invite. This was only reachable from
+     * the Tenancies list page, not from the tenancy's own Show page.
+     */
+    public function test_landlord_can_send_a_portal_invite_from_the_tenancy_show_page(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::active()->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+        $tenancy->tenant->update(['user_id' => null, 'phone' => '0712345678', 'portal_invite_token' => null]);
+
+        $component = Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->assertSee('Send Invite')
+            ->call('sendPortalInvite')
+            ->assertHasNoErrors();
+
+        $tenancy->tenant->refresh();
+        $this->assertNotNull($tenancy->tenant->portal_invite_token);
+        $this->assertNotNull($tenancy->tenant->portal_invite_sent_at);
+        $this->assertNotNull($component->get('generatedInviteLink'));
+        $this->assertStringContainsString($tenancy->tenant->portal_invite_token, $component->get('generatedInviteLink'));
+        $this->assertNotNull($component->get('generatedInviteWhatsappUrl'));
+    }
+
+    /**
+     * Same manual "Send Reminder" as the Rent & Payments page, now also
+     * reachable from a tenancy's own Show page — targets the oldest
+     * outstanding charge on the tenancy, since a tenancy can have several.
+     */
+    public function test_landlord_can_send_a_reminder_from_the_tenancy_show_page(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::active()->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+
+        RentCharge::where('tenancy_id', $tenancy->id)->delete();
+        $older = RentCharge::create([
+            'tenancy_id' => $tenancy->id,
+            'period_year' => now()->subMonth()->year,
+            'period_month' => now()->subMonth()->month,
+            'due_date' => now()->subMonth(),
+            'amount_expected' => 10000,
+            'amount_paid' => 0,
+            'status' => 'overdue',
+        ]);
+        RentCharge::create([
+            'tenancy_id' => $tenancy->id,
+            'period_year' => now()->year,
+            'period_month' => now()->month,
+            'due_date' => now(),
+            'amount_expected' => 10000,
+            'amount_paid' => 0,
+            'status' => 'overdue',
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->assertSee('Send Reminder')
+            ->call('sendReminder')
+            ->assertHasNoErrors();
+
+        // Targets the oldest outstanding charge, not just any/the newest.
+        $this->assertTrue(
+            AppNotification::where('related_type', $older->getMorphClass())
+                ->where('related_id', $older->id)
+                ->where('event_type', 'rent_reminder_manual_'.now()->format('Ymd'))
+                ->exists()
+        );
+    }
+
+    public function test_send_reminder_button_is_hidden_when_the_tenant_has_no_balance(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::active()->whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->firstOrFail();
+
+        // mount() first — it's what calls ensureChargesForPeriod() and may
+        // create this period's charge if it didn't already exist, so it
+        // must run before marking everything paid below, not after.
+        $component = Livewire::actingAs($landlord)->test(TenancyShow::class, ['tenancy' => $tenancy]);
+
+        RentCharge::where('tenancy_id', $tenancy->id)->update(['amount_paid' => \Illuminate\Support\Facades\DB::raw('amount_expected'), 'status' => 'paid']);
+
+        $component->call('refreshTenancy')->assertDontSee('Send Reminder');
+    }
+
+    public function test_picking_a_notice_period_month_preset_computes_a_positive_day_count(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+        $tenant = Tenant::create(['name' => 'Notice Preset Tenant', 'phone' => '0700000555']);
+
+        $component = Livewire::actingAs($landlord)
+            ->test(TenancyForm::class)
+            ->set('property_id', $house->block->property_id)
+            ->set('block_id', $house->block_id)
+            ->set('house_id', $house->id)
+            ->set('tenant_id', $tenant->id)
+            ->set('move_in_date', now()->format('Y-m-d'))
+            ->set('monthly_rent', '15000')
+            ->set('deposit_required', '15000')
+            ->set('rent_due_day', 1)
+            ->set('notice_period_months', '3');
+
+        $this->assertGreaterThan(0, (int) $component->get('notice_period_days'));
+
+        $component->call('save')->assertHasNoErrors('notice_period_days');
+
+        $this->assertDatabaseHas('tenancies', [
+            'house_id' => $house->id,
+            'tenant_id' => $tenant->id,
+        ]);
+        $this->assertGreaterThan(0, Tenancy::where('house_id', $house->id)->where('tenant_id', $tenant->id)->firstOrFail()->notice_period_days);
     }
 
     public function test_a_second_application_cannot_be_converted_onto_an_already_taken_house(): void

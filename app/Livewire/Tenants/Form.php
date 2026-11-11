@@ -4,6 +4,7 @@ namespace App\Livewire\Tenants;
 
 use App\Models\Tenant;
 use App\Models\User;
+use App\Rules\ValidPhoneNumber;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -16,6 +17,8 @@ class Form extends Component
     public ?Tenant $tenant = null;
 
     public string $name = '';
+
+    public string $business_name = '';
 
     public string $phone = '';
 
@@ -41,6 +44,7 @@ class Form extends Component
             $this->authorize('update', $tenant);
             $this->tenant = $tenant;
             $this->name = $tenant->name;
+            $this->business_name = (string) $tenant->business_name;
             $this->phone = $tenant->phone;
             $this->email = (string) $tenant->email;
             $this->id_number = (string) $tenant->id_number;
@@ -57,7 +61,13 @@ class Form extends Component
     {
         $data = $this->validate([
             'name' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:32'],
+            // Optional — a residential tenant has no business to name, a
+            // commercial one (a shop, stall or office) often does. Never
+            // required either way; purely descriptive.
+            'business_name' => ['nullable', 'string', 'max:255'],
+            // Kenya-only, same as Tenant\Profile — Tenant has no
+            // per-record country_code the way User does.
+            'phone' => ['required', 'string', 'max:32', new ValidPhoneNumber('KE')],
             'email' => ['nullable', 'email', 'max:255'],
             'id_number' => ['nullable', 'string', 'max:64'],
             'emergency_contact_name' => ['nullable', 'string', 'max:255'],

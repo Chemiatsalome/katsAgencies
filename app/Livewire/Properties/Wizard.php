@@ -3,6 +3,7 @@
 namespace App\Livewire\Properties;
 
 use App\Models\House;
+use App\Models\LandlordSetting;
 use App\Models\Property;
 use App\Models\User;
 use App\Services\PropertyProvisioningService;
@@ -32,6 +33,17 @@ class Wizard extends Component
     use WithFileUploads;
 
     public int $step = 1;
+
+    /**
+     * A pure UI funnel for which Property::TYPES / House::TYPES options
+     * step 1 and the Rentable Spaces groups offer — never persisted (see
+     * Property::CATEGORY_TYPES's own docblock). Blank means "no category
+     * chosen yet", which the blade reads as "show the category picker
+     * instead of step 1" — $step itself is untouched by this, so every
+     * existing step 1-4 test that never sets $category keeps working
+     * exactly as before (render() just falls back to the unfiltered lists).
+     */
+    public string $category = '';
 
     // Step 1
     public ?int $landlord_id = null;
@@ -68,6 +80,17 @@ class Wizard extends Component
 
         $this->landlord_id = Auth::user()->hasRole('admin') ? null : Auth::user()->landlordId();
         $this->groups = [$this->blankGroup()];
+
+        // A convenience starting point, not an assumption — the landlord's
+        // own registered address, which is often but not always where a
+        // property actually sits. Still a normal editable field below.
+        if ($this->landlord_id) {
+            $this->address = (string) LandlordSetting::get($this->landlord_id, 'contract_landlord_address', '');
+            $lat = LandlordSetting::get($this->landlord_id, 'contract_landlord_lat');
+            $lon = LandlordSetting::get($this->landlord_id, 'contract_landlord_lon');
+            $this->latitude = $lat !== null ? (float) $lat : null;
+            $this->longitude = $lon !== null ? (float) $lon : null;
+        }
     }
 
     private function blankGroup(int $blockIndex = 0): array
@@ -96,6 +119,34 @@ class Wizard extends Component
             ->sum(fn (array $g) => (int) ($g['count'] ?? 0));
 
         return $allocated + 1;
+    }
+
+    /**
+     * category === '' shows the picker; picking one here never gates
+     * anything server-side (goToStep2()/goToStep3()/goToStep4()/save() are
+     * completely unaware of $category) — it only narrows which options
+     * render() hands the view. When a category maps to exactly one
+     * TYPES value (Office, Mixed-use today), pre-selecting it skips an
+     * otherwise pointless single-option dropdown.
+     */
+    public function chooseCategory(string $category): void
+    {
+        if (! in_array($category, Property::CATEGORIES, true)) {
+            return;
+        }
+
+        $this->category = $category;
+
+        $types = Property::CATEGORY_TYPES[$category] ?? [];
+        if (count($types) === 1) {
+            $this->type = $types[0];
+            $this->updatedType();
+        }
+    }
+
+    public function changeCategory(): void
+    {
+        $this->category = '';
     }
 
     public function updatedType(): void
@@ -409,8 +460,8 @@ class Wizard extends Component
 
         return view('livewire.properties.wizard', [
             'landlords' => $user->hasRole('admin') ? User::role('landlord')->orderBy('name')->get() : collect(),
-            'propertyTypes' => Property::TYPES,
-            'houseTypes' => House::TYPES,
+            'propertyTypes' => Property::typesForCategory($this->category),
+            'houseTypes' => House::typesForCategory($this->category),
             'blockLabels' => $this->blockLabels(),
         ]);
     }

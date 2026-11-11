@@ -107,6 +107,8 @@ class Form extends Component
 
     public function render()
     {
-        return view('livewire.houses.form');
+        return view('livewire.houses.form', [
+            'houseTypes' => House::TYPES,
+        ]);
     }
 }

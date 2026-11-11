@@ -9,24 +9,88 @@
         <div class="py-8">
             <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
 
-                @if ($step === 1)
+                @if ($category === '')
+                    {{-- ========================= CATEGORY PICKER ========================= --}}
                     <x-page-banner
                         image="modern-villa-01.jpg"
                         eyebrow="Add Property"
-                        title="Let's get your property set up"
-                        subtitle="A few steps to describe the property, its units, and rent — then you're ready to start managing it."
+                        title="What type of property do you manage?"
+                        subtitle="Choose the category that best describes the property you want to add — this just narrows the options on the next few steps, it never limits what you can add later."
                     />
-                @endif
 
-                <div class="flex items-center gap-2 text-xs font-medium flex-wrap">
-                    <span class="px-2 py-1 rounded-full {{ $step >= 1 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">1. Property</span>
-                    <span class="text-brand-slate">—</span>
-                    <span class="px-2 py-1 rounded-full {{ $step >= 2 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">2. Rentable Spaces</span>
-                    <span class="text-brand-slate">—</span>
-                    <span class="px-2 py-1 rounded-full {{ $step >= 3 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">3. Rent &amp; Deposit</span>
-                    <span class="text-brand-slate">—</span>
-                    <span class="px-2 py-1 rounded-full {{ $step >= 4 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">4. Review</span>
-                </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        @php
+                            $categoryCards = [
+                                'residential' => [
+                                    'label' => 'Residential',
+                                    'description' => 'Apartments, flats, houses, maisonettes, villas, residential estates.',
+                                    'image' => 'category-residential.png',
+                                ],
+                                'commercial' => [
+                                    'label' => 'Commercial',
+                                    'description' => 'Shopping malls, shopping centres, retail buildings, shops and retail spaces.',
+                                    'image' => 'category-commercial.png',
+                                ],
+                                'office' => [
+                                    'label' => 'Office Properties',
+                                    'description' => 'Office buildings, office complexes, individual offices.',
+                                    'image' => 'category-office.png',
+                                ],
+                                'mixed_use' => [
+                                    'label' => 'Mixed-use',
+                                    'description' => 'A development combining residential and commercial spaces.',
+                                    'image' => 'category-mixed-use.png',
+                                ],
+                            ];
+                        @endphp
+
+                        @foreach ($categoryCards as $key => $card)
+                            <button
+                                type="button"
+                                wire:click="chooseCategory('{{ $key }}')"
+                                class="relative text-left rounded-xl overflow-hidden shadow-sm border border-brand-border hover:border-teal transition group h-40"
+                            >
+                                <img src="{{ asset('images/properties/' . $card['image']) }}" alt="" class="absolute inset-0 w-full h-full object-cover">
+                                <div class="absolute inset-0 bg-gradient-to-t from-navy-dark/90 via-navy-dark/40 to-navy-dark/10 group-hover:from-navy-dark/95"></div>
+                                <div class="relative h-full flex flex-col justify-end p-4">
+                                    <p class="text-base font-semibold text-white">{{ $card['label'] }}</p>
+                                    <p class="text-xs text-white/80 mt-0.5">{{ $card['description'] }}</p>
+                                </div>
+                            </button>
+                        @endforeach
+                    </div>
+
+                    <p class="text-xs text-brand-slate">
+                        Not sure, or it doesn't fit neatly into one of these?
+                        <button type="button" wire:click="chooseCategory('residential')" class="text-teal hover:underline">Start anyway</button>
+                        — every option, including "Other", is still available on the next step.
+                    </p>
+                @else
+                    <div class="flex items-center justify-between">
+                        @if ($step === 1)
+                            <x-page-banner
+                                image="modern-villa-01.jpg"
+                                eyebrow="Add Property"
+                                title="Let's get your property set up"
+                                subtitle="A few steps to describe the property, its units, and rent — then you're ready to start managing it."
+                                class="flex-1"
+                            />
+                        @endif
+                    </div>
+
+                    @if ($step === 1)
+                        <button type="button" wire:click="changeCategory" class="text-xs text-brand-slate hover:text-charcoal">← Change property category</button>
+                    @endif
+
+                    <div class="flex items-center gap-2 text-xs font-medium flex-wrap">
+                        <span class="px-2 py-1 rounded-full {{ $step >= 1 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">1. Property</span>
+                        <span class="text-brand-slate">—</span>
+                        <span class="px-2 py-1 rounded-full {{ $step >= 2 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">2. Rentable Spaces</span>
+                        <span class="text-brand-slate">—</span>
+                        <span class="px-2 py-1 rounded-full {{ $step >= 3 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">3. Rent &amp; Deposit</span>
+                        <span class="text-brand-slate">—</span>
+                        <span class="px-2 py-1 rounded-full {{ $step >= 4 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">4. Review</span>
+                    </div>
 
                 {{-- ============================= STEP 1 ============================= --}}
                 @if ($step === 1)
@@ -51,7 +115,7 @@
                                 <x-input-label for="type" value="What kind of property is this?" />
                                 <select id="type" wire:model.live="type" class="mt-1 block w-full rounded-md border-brand-border">
                                     @foreach ($propertyTypes as $value)
-                                        <option value="{{ $value }}">{{ \Illuminate\Support\Str::headline($value) }}</option>
+                                        <option value="{{ $value }}">{{ \App\Models\Property::typeLabel($value) }}</option>
                                     @endforeach
                                 </select>
                                 <x-input-error :messages="$errors->get('type')" class="mt-1" />
@@ -168,7 +232,7 @@
                                             <x-input-label value="Unit type" />
                                             <select wire:model.live="groups.{{ $i }}.unit_type" class="mt-1 block w-full rounded-md border-brand-border">
                                                 @foreach ($houseTypes as $value)
-                                                    <option value="{{ $value }}">{{ \Illuminate\Support\Str::headline($value) }}</option>
+                                                    <option value="{{ $value }}">{{ \App\Models\House::typeLabel($value) }}</option>
                                                 @endforeach
                                             </select>
                                             <x-input-error :messages="$errors->get('groups.'.$i.'.unit_type')" class="mt-1" />
@@ -331,7 +395,7 @@
                                             <td class="px-3 py-1">
                                                 <select wire:model="reviewUnits.{{ $i }}.type" class="rounded-md border-brand-border text-sm">
                                                     @foreach ($houseTypes as $value)
-                                                        <option value="{{ $value }}">{{ \Illuminate\Support\Str::headline($value) }}</option>
+                                                        <option value="{{ $value }}">{{ \App\Models\House::typeLabel($value) }}</option>
                                                     @endforeach
                                                 </select>
                                             </td>
@@ -351,6 +415,7 @@
                             </x-primary-button>
                         </div>
                     </div>
+                    @endif
                 @endif
 
             </div>

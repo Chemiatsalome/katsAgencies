@@ -93,6 +93,10 @@
                                     <x-text-input type="text" wire:model="new_tenant_phone" placeholder="Phone number" class="block w-full" />
                                     <x-input-error :messages="$errors->get('new_tenant_phone')" class="mt-1" />
                                 </div>
+                                <div class="sm:col-span-2">
+                                    <x-text-input type="text" wire:model="new_tenant_business_name" placeholder="Business name (optional, for a shop, stall or office tenant)" class="block w-full" />
+                                    <x-input-error :messages="$errors->get('new_tenant_business_name')" class="mt-1" />
+                                </div>
                             </div>
                         @endif
                     </div>

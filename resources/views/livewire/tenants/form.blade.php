@@ -19,6 +19,12 @@
                         </div>
                     </div>
 
+                    <div>
+                        <x-input-label for="business_name" value="Business Name (optional)" />
+                        <x-text-input id="business_name" type="text" wire:model="business_name" class="mt-1 block w-full" placeholder="e.g. for a shop, stall or office tenancy" />
+                        <x-input-error :messages="$errors->get('business_name')" class="mt-1" />
+                    </div>
+
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <x-input-label for="email" value="Email (optional)" />

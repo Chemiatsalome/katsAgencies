@@ -10,9 +10,9 @@ use Illuminate\Support\Str;
 
 #[Fillable([
     'house_id', 'invited_by', 'existing_tenant_id', 'token', 'tenant_phone', 'tenant_email',
-    'monthly_rent', 'deposit_required', 'rent_due_day', 'move_in_date', 'lease_end_date',
-    'notice_period_days', 'status', 'expires_at', 'opened_at', 'completed_at', 'cancelled_at',
-    'resulting_tenancy_id',
+    'monthly_rent', 'deposit_required', 'initial_deposit_paid', 'deposit_method', 'rent_due_day',
+    'move_in_date', 'lease_end_date', 'notice_period_days', 'status', 'expires_at', 'opened_at',
+    'completed_at', 'cancelled_at', 'resulting_tenancy_id',
 ])]
 class TenantInvitation extends Model
 {
@@ -21,6 +21,7 @@ class TenantInvitation extends Model
         return [
             'monthly_rent' => 'decimal:2',
             'deposit_required' => 'decimal:2',
+            'initial_deposit_paid' => 'decimal:2',
             'rent_due_day' => 'integer',
             'move_in_date' => 'date',
             'lease_end_date' => 'date',

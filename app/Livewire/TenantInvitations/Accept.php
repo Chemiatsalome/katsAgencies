@@ -4,6 +4,7 @@ namespace App\Livewire\TenantInvitations;
 
 use App\Models\Tenant;
 use App\Models\TenantInvitation;
+use App\Rules\ValidPhoneNumber;
 use App\Services\NotificationService;
 use App\Services\TenancyProvisioningService;
 use Illuminate\Support\Facades\Auth;
@@ -21,6 +22,8 @@ class Accept extends Component
 
     // New-account registration fields
     public string $name = '';
+
+    public string $business_name = '';
 
     public string $phone = '';
 
@@ -112,9 +115,16 @@ class Accept extends Component
             return;
         }
 
+        // The invitation has no country field of its own — the tenant is
+        // moving into a specific property, so that property's landlord's
+        // own registered country is the only sensible context to validate
+        // against (falling back to Kenya if that's somehow unset).
+        $countryCode = $this->invitation->house?->block?->property?->landlord?->country_code ?? 'KE';
+
         $this->validate([
             'name' => ['required', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:32'],
+            'business_name' => ['nullable', 'string', 'max:255'],
+            'phone' => ['required', 'string', 'max:32', new ValidPhoneNumber($countryCode)],
             'email' => ['required', 'email', 'max:255', Rule::unique('users', 'email')],
             'id_number' => ['nullable', 'string', 'max:64'],
             'emergency_contact_name' => ['nullable', 'string', 'max:255'],
@@ -126,6 +136,7 @@ class Accept extends Component
 
         $tenant = Tenant::create([
             'name' => $this->name,
+            'business_name' => $this->business_name ?: null,
             'phone' => $this->phone,
             'email' => $this->email,
             'id_number' => $this->id_number ?: null,
@@ -169,6 +180,15 @@ class Accept extends Component
             'notice_period_days' => $this->invitation->notice_period_days,
             'monthly_rent' => $this->invitation->monthly_rent,
             'deposit_required' => $this->invitation->deposit_required,
+            'initial_deposit_paid' => $this->invitation->initial_deposit_paid,
+            'deposit_method' => $this->invitation->deposit_method,
+            // Whoever is authenticated at this exact moment is the tenant
+            // themselves (they just logged in or registered) — the deposit
+            // was collected by the landlord who created the invitation,
+            // before the tenant ever had an account, so that's who this
+            // DepositPayment record needs to be attributed to instead of
+            // falling through to TenancyProvisioningService's Auth::id() default.
+            'recorded_by' => $this->invitation->invited_by,
             'rent_due_day' => $this->invitation->rent_due_day,
             'status' => 'active',
         ]);

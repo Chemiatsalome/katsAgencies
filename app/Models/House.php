@@ -24,8 +24,39 @@ class House extends Model
     /** Centralized so Houses\Form and Properties\Wizard validate against the exact same list, instead of two hardcoded 'in:...' strings drifting apart. */
     public const TYPES = [
         'bedsitter', 'studio', 'sq', 'one_bedroom', 'two_bedroom', 'three_bedroom',
-        'four_bedroom', 'house', 'maisonette', 'shop', 'office', 'villa', 'other',
+        'four_bedroom', 'house', 'maisonette', 'shop', 'stall', 'office', 'villa', 'other',
     ];
+
+    /**
+     * Mirrors Property::CATEGORY_TYPES for the Rentable Spaces step's own
+     * unit_type dropdown — which rentable-space types make sense for the
+     * landlord's chosen category. 'mixed_use' is deliberately absent: a
+     * mixed-use development must be able to combine any of these types
+     * within the same property (see Properties\Wizard's $groups), so that
+     * category leaves this list unfiltered rather than picking one.
+     */
+    public const CATEGORY_UNIT_TYPES = [
+        'residential' => [
+            'bedsitter', 'studio', 'sq', 'one_bedroom', 'two_bedroom',
+            'three_bedroom', 'four_bedroom', 'house', 'maisonette', 'villa',
+        ],
+        'commercial' => ['shop', 'stall'],
+        'office' => ['office'],
+    ];
+
+    /** @return string[] TYPES values to offer for this category, 'other' always appended last. Unknown/blank/mixed_use category = every TYPES value (today's unfiltered behaviour). */
+    public static function typesForCategory(string $category): array
+    {
+        $types = self::CATEGORY_UNIT_TYPES[$category] ?? null;
+
+        return $types === null ? self::TYPES : [...$types, 'other'];
+    }
+
+    /** Str::headline('sq') would read "Sq", not the initialism landlords actually expect. */
+    public static function typeLabel(string $type): string
+    {
+        return $type === 'sq' ? 'SQ' : \Illuminate\Support\Str::headline($type);
+    }
 
     /**
      * Only the explicitly numbered types have a bedroom count implied by

@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Properties;
 
+use App\Models\LandlordSetting;
 use App\Models\Property;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -66,6 +67,19 @@ class Form extends Component
         } else {
             $this->authorize('create', Property::class);
             $this->landlord_id = $user->hasRole('admin') ? null : $user->landlordId();
+
+            // A convenience starting point, not an assumption — this is
+            // the landlord's own registered address, which is often but
+            // not always where a property actually sits. Still a normal
+            // editable field below, so a different address just types
+            // over it.
+            if ($this->landlord_id) {
+                $this->address = (string) LandlordSetting::get($this->landlord_id, 'contract_landlord_address', '');
+                $lat = LandlordSetting::get($this->landlord_id, 'contract_landlord_lat');
+                $lon = LandlordSetting::get($this->landlord_id, 'contract_landlord_lon');
+                $this->latitude = $lat !== null ? (float) $lat : null;
+                $this->longitude = $lon !== null ? (float) $lon : null;
+            }
         }
     }
 
@@ -126,6 +140,7 @@ class Form extends Component
 
         return view('livewire.properties.form', [
             'landlords' => $user->hasRole('admin') ? User::role('landlord')->orderBy('name')->get() : collect(),
+            'propertyTypes' => Property::TYPES,
         ]);
     }
 }

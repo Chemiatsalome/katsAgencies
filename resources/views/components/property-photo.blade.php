@@ -5,11 +5,14 @@
     // to the property's type, never implying it's the actual unit.
     $typeFallbacks = [
         'apartment' => 'modern-apartment-building-01.jpg',
+        'flats' => 'modern-apartment-building-01.jpg',
         'residential_compound' => 'residential-compound-01.jpg',
         'individual_house' => 'modern-house-01.jpg',
         'maisonette' => 'maisonette-exterior-01.jpg',
-        'commercial_building' => 'modern-apartment-building-01.jpg',
-        'mixed_use' => 'modern-apartment-building-01.jpg',
+        'commercial_building' => 'category-commercial.png',
+        'shopping_mall' => 'category-commercial.png',
+        'office_building' => 'category-office.png',
+        'mixed_use' => 'category-mixed-use.png',
         'villas' => 'modern-villa-01.jpg',
         'other' => 'modern-house-02.jpg',
     ];

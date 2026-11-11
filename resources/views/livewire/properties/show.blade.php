@@ -24,9 +24,11 @@
             </div>
 
             @php
-                $vacantTenancyCreateUrl = route('manage.tenancies.create', $onlyVacantHouseId
+                $vacantUnitRouteParams = $onlyVacantHouseId
                     ? ['house_id' => $onlyVacantHouseId]
-                    : ['property_id' => $property->id]);
+                    : ['property_id' => $property->id];
+                $vacantTenancyCreateUrl = route('manage.tenancies.create', $vacantUnitRouteParams);
+                $vacantInvitationCreateUrl = route('manage.tenant-invitations.create', $vacantUnitRouteParams);
             @endphp
 
             @if ($justOnboarded)
@@ -39,7 +41,7 @@
                         <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
                             Add a tenant now
                         </a>
-                        <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-white">
+                        <a href="{{ $vacantInvitationCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-white">
                             Invite a tenant
                         </a>
                         <button type="button" @click="dismissed = true" class="text-xs text-brand-slate hover:text-charcoal">I'll do this later</button>
@@ -55,7 +57,7 @@
                         <a href="{{ $vacantTenancyCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 bg-navy text-white text-xs font-medium rounded-md hover:bg-navy-dark">
                             Add a tenant
                         </a>
-                        <a href="{{ route('manage.tenant-invitations.create') }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-offwhite">
+                        <a href="{{ $vacantInvitationCreateUrl }}" wire:navigate class="inline-flex items-center px-3 py-1.5 border border-brand-border text-charcoal text-xs font-medium rounded-md hover:bg-offwhite">
                             Invite a tenant
                         </a>
                     </div>

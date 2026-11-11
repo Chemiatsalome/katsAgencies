@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Livewire\Properties\Wizard;
 use App\Models\DepositPayment;
+use App\Models\LandlordSetting;
 use App\Models\Manager;
 use App\Models\Property;
 use App\Models\Tenancy;
@@ -38,6 +39,114 @@ class PropertyWizardTest extends TestCase
             ->call('goToStep2');
 
         return $component;
+    }
+
+    /**
+     * Category is a pure UI funnel (see Property::CATEGORY_TYPES /
+     * House::CATEGORY_UNIT_TYPES) — never persisted, never gates
+     * goToStep2/3/4/save server-side. These tests cover the filtering it
+     * does apply, and that skipping it entirely (every pre-existing test
+     * above/below this one does) still behaves exactly as before.
+     */
+    public function test_picking_a_category_filters_the_property_type_and_unit_type_options_offered(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class);
+
+        // Before a category is chosen: every type is offered, same as
+        // always (today's unfiltered behaviour, preserved for anyone who
+        // never interacts with $category at all).
+        $component->assertSet('category', '')
+            ->assertViewHas('propertyTypes', Property::TYPES)
+            ->assertViewHas('houseTypes', \App\Models\House::TYPES);
+
+        $component->call('chooseCategory', 'commercial')
+            ->assertSet('category', 'commercial');
+
+        $propertyTypes = $component->viewData('propertyTypes');
+        $this->assertEqualsCanonicalizing(['shopping_mall', 'commercial_building', 'other'], $propertyTypes);
+        $this->assertNotContains('apartment', $propertyTypes);
+
+        $houseTypes = $component->viewData('houseTypes');
+        $this->assertEqualsCanonicalizing(['shop', 'stall', 'other'], $houseTypes);
+        $this->assertNotContains('one_bedroom', $houseTypes);
+    }
+
+    public function test_office_category_has_only_one_property_type_and_preselects_it(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'office')
+            ->assertSet('type', 'office_building');
+    }
+
+    public function test_mixed_use_category_preselects_its_type_and_leaves_unit_types_unfiltered(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'mixed_use')
+            ->assertSet('type', 'mixed_use');
+
+        $this->assertEqualsCanonicalizing(\App\Models\House::TYPES, $component->viewData('houseTypes'));
+    }
+
+    public function test_changing_category_resets_the_filter_back_to_the_picker(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'residential')
+            ->assertSet('category', 'residential')
+            ->call('changeCategory')
+            ->assertSet('category', '');
+    }
+
+    /**
+     * Requirement E: a mixed-use property must be able to combine
+     * different rentable-space types within the same development —
+     * already supported structurally by $groups/PropertyProvisioningService
+     * before this feature existed; this pins that it still works once a
+     * category has been chosen and the Rentable Spaces step is reached.
+     */
+    public function test_a_mixed_use_property_can_combine_residential_and_commercial_units_in_one_property(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'mixed_use')
+            ->set('name', 'Riverside Mixed Development')
+            ->call('goToStep2')
+            ->set('layout', 'blocks')
+            ->set('block_count', 2);
+
+        $component->set('groups.0.unit_type', 'two_bedroom')
+            ->set('groups.0.monthly_rent', '25000')
+            ->set('groups.0.block_index', 0)
+            ->call('addGroup');
+
+        $component->set('groups.1.unit_type', 'shop')
+            ->set('groups.1.monthly_rent', '40000')
+            ->set('groups.1.block_index', 1)
+            ->call('goToStep3')
+            ->set('groups.0.deposit_mode', 'none')
+            ->set('groups.1.deposit_mode', 'none')
+            ->call('goToStep4')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $property = Property::where('name', 'Riverside Mixed Development')->firstOrFail();
+        $types = $property->houses()->pluck('type')->all();
+
+        $this->assertContains('two_bedroom', $types);
+        $this->assertContains('shop', $types);
     }
 
     public function test_standalone_maisonette_wizard_never_exposes_a_block_step_and_auto_creates_one_block(): void
@@ -415,5 +524,38 @@ class PropertyWizardTest extends TestCase
         $manager->update(['user_id' => $managerUser->id]);
 
         Livewire::actingAs($managerUser)->test(Wizard::class)->assertStatus(403);
+    }
+
+    /**
+     * A convenience starting point, not an assumption — most landlords'
+     * first property is near where they themselves are, so their own
+     * registered address (captured once, at signup) prefills step 1
+     * instead of asking for it again. Still a plain editable field.
+     */
+    public function test_step_one_prefills_address_from_the_landlords_own_registered_location(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        LandlordSetting::set($landlord->id, 'contract_landlord_address', 'Nyali, Mombasa');
+        LandlordSetting::set($landlord->id, 'contract_landlord_lat', '-4.0435');
+        LandlordSetting::set($landlord->id, 'contract_landlord_lon', '39.6682');
+
+        Livewire::actingAs($landlord)
+            ->test(Wizard::class)
+            ->assertSet('address', 'Nyali, Mombasa')
+            ->assertSet('latitude', -4.0435)
+            ->assertSet('longitude', 39.6682);
+    }
+
+    public function test_step_one_address_prefill_is_blank_when_the_landlord_never_registered_a_location(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(Wizard::class)
+            ->assertSet('address', '');
     }
 }

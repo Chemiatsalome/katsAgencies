@@ -22,19 +22,9 @@
                         <div>
                             <x-input-label for="type" value="Type" />
                             <select id="type" wire:model.live="type" class="mt-1 block w-full rounded-md border-brand-border">
-                                <option value="bedsitter">Bedsitter</option>
-                                <option value="studio">Studio</option>
-                                <option value="sq">SQ</option>
-                                <option value="one_bedroom">One Bedroom</option>
-                                <option value="two_bedroom">Two Bedroom</option>
-                                <option value="three_bedroom">Three Bedroom</option>
-                                <option value="four_bedroom">Four Bedroom</option>
-                                <option value="house">House</option>
-                                <option value="villa">Villa</option>
-                                <option value="maisonette">Maisonette</option>
-                                <option value="shop">Shop</option>
-                                <option value="office">Office</option>
-                                <option value="other">Other</option>
+                                @foreach ($houseTypes as $value)
+                                    <option value="{{ $value }}">{{ \App\Models\House::typeLabel($value) }}</option>
+                                @endforeach
                             </select>
                             <x-input-error :messages="$errors->get('type')" class="mt-1" />
                         </div>
