@@ -66,6 +66,17 @@ class Wizard extends Component
 
     public int $block_count = 1;
 
+    /**
+     * Optional landlord-given name per block index (0-based, same indexing
+     * as blockLabels()/groups.*.block_index) — e.g. "Ground Floor" or
+     * "East Wing" for an office/commercial building's floors or sections.
+     * A blank entry (the default for every block) falls back to the
+     * existing auto-lettered "Block A"/"Block B" naming in blockLabels().
+     *
+     * @var array<int, string>
+     */
+    public array $block_names = [];
+
     /** @var array<int, array<string, mixed>> */
     public array $groups = [];
 
@@ -93,11 +104,26 @@ class Wizard extends Component
         }
     }
 
+    /**
+     * 'one_bedroom' (today's long-standing default) stays the default for
+     * every category except the two whose filtered dropdown wouldn't even
+     * list it — Commercial and Office — where it's replaced with that
+     * category's own first offered type instead, so the group's unit_type
+     * is always something its own dropdown can actually show as selected.
+     */
+    private function defaultUnitType(): string
+    {
+        return match ($this->category) {
+            'commercial', 'office' => House::typesForCategory($this->category)[0] ?? 'one_bedroom',
+            default => 'one_bedroom',
+        };
+    }
+
     private function blankGroup(int $blockIndex = 0): array
     {
         return [
             'block_index' => $blockIndex,
-            'unit_type' => 'one_bedroom',
+            'unit_type' => $this->defaultUnitType(),
             'bedrooms' => null,
             'count' => 1,
             'starting_number' => (string) $this->nextStartingNumber($blockIndex),
@@ -142,6 +168,14 @@ class Wizard extends Component
             $this->type = $types[0];
             $this->updatedType();
         }
+
+        // Picking a category always happens before step 2 is ever reached
+        // (mount() already seeded one untouched blank group, and this is
+        // the only way back there once chosen), so resetting here can
+        // never discard anything the landlord actually filled in — it
+        // just ensures the lone starting group's unit_type is one its own
+        // now-filtered dropdown can actually show as selected.
+        $this->groups = [$this->blankGroup()];
     }
 
     public function changeCategory(): void
@@ -163,8 +197,12 @@ class Wizard extends Component
     /**
      * Only the explicitly numbered unit types (one/two/three/four bedroom)
      * imply a bedroom count — picking one always sets bedrooms to match, the
-     * same as House\Form's single-unit equivalent. Anything else is left
-     * alone so a manually entered value is never silently overwritten.
+     * same as House\Form's single-unit equivalent. Anything else residential
+     * is left alone so a manually entered value is never silently
+     * overwritten. Switching to a non-residential type (shop/stall/office)
+     * always clears it — that field is hidden for those types in the
+     * blade, so a stale count from a previous residential selection must
+     * not survive into the saved House record.
      */
     public function updatedGroups($value, $key): void
     {
@@ -173,7 +211,15 @@ class Wizard extends Component
         }
 
         $groupIndex = (int) explode('.', $key)[0];
-        $implied = House::bedroomsImpliedByType($this->groups[$groupIndex]['unit_type'] ?? null);
+        $type = $this->groups[$groupIndex]['unit_type'] ?? null;
+
+        if ($type !== null && ! House::isResidentialType($type)) {
+            $this->groups[$groupIndex]['bedrooms'] = null;
+
+            return;
+        }
+
+        $implied = House::bedroomsImpliedByType($type);
 
         if ($implied !== null) {
             $this->groups[$groupIndex]['bedrooms'] = $implied;
@@ -365,7 +411,8 @@ class Wizard extends Component
 
         $labels = [];
         for ($i = 0; $i < $this->block_count; $i++) {
-            $labels[$i] = 'Block '.$this->blockLetter($i);
+            $custom = trim($this->block_names[$i] ?? '');
+            $labels[$i] = $custom !== '' ? $custom : 'Block '.$this->blockLetter($i);
         }
 
         return $labels;
@@ -409,7 +456,8 @@ class Wizard extends Component
             ->unique();
 
         if ($duplicates->isNotEmpty()) {
-            $this->addError('reviewUnits', 'Duplicate unit numbers within the same block: '.$duplicates->implode(', ').'. Each unit needs a unique number within its block.');
+            $nounLower = $this->categoryCopy()['noun_lower'];
+            $this->addError('reviewUnits', "Duplicate {$nounLower} numbers within the same block: ".$duplicates->implode(', ').". Each {$nounLower} needs a unique number within its block.");
             $this->submitting = false;
 
             return;
@@ -434,6 +482,7 @@ class Wizard extends Component
             $this->layout,
             $this->block_count,
             $this->reviewUnits,
+            $this->layout === 'blocks' ? $this->blockLabels() : [],
         );
 
         // The "just onboarded" signal travels as a query param on the
@@ -454,6 +503,138 @@ class Wizard extends Component
         $this->dispatch('property-created', url: route('manage.properties.show', ['property' => $property, 'onboarded' => 1]));
     }
 
+    /**
+     * Pure UI copy for the chosen category — headings, placeholders and the
+     * terminology used for a "unit" throughout steps 1-4. '' (no category,
+     * only reachable by a caller that never calls chooseCategory — i.e.
+     * every pre-existing test) and 'residential' both resolve to exactly
+     * today's pre-category wording, so neither changes anything that
+     * already worked. Never changes which fields exist or what they
+     * validate/save as — only the words around them.
+     *
+     * @return array<string, mixed>
+     */
+    private function categoryCopy(): array
+    {
+        $defaults = [
+            'noun' => 'Unit',
+            'noun_lower' => 'unit',
+            'noun_plural_lower' => 'units',
+            'step2_label' => 'Rentable Spaces',
+            'block_noun_lower' => 'block',
+            'block_count_label' => 'Number of blocks',
+            'step1_image' => 'modern-villa-01.jpg',
+            'step1_heading' => "Let's get your property set up",
+            'step1_subtitle' => "A few steps to describe the property, its units, and rent — then you're ready to start managing it.",
+            'step1_intro' => "Tell us about the property. You'll describe the actual units in the next step.",
+            'name_placeholder' => 'e.g. Greenview Villas or Sunrise Apartments',
+            'layout_heading' => 'How are the rentable spaces organized?',
+            'layout_options' => [
+                'standalone' => [
+                    'label' => 'One standalone property',
+                    'description' => 'A single house, maisonette or unit — no blocks needed.',
+                ],
+                'multiple_similar' => [
+                    'label' => 'Multiple similar houses or villas',
+                    'description' => 'Several units of the same or different types, no real blocks.',
+                ],
+                'blocks' => [
+                    'label' => 'An apartment building with blocks',
+                    'description' => 'Units organized into separate blocks (e.g. Block A, Block B).',
+                ],
+            ],
+        ];
+
+        $overrides = [
+            'commercial' => [
+                'noun' => 'Shop',
+                'noun_lower' => 'shop',
+                'noun_plural_lower' => 'shops',
+                'step2_label' => 'Shops & Stalls',
+                'block_noun_lower' => 'floor, wing or section',
+                'block_count_label' => 'Number of floors, wings or sections',
+                'step1_image' => 'category-commercial.png',
+                'step1_heading' => "Let's get your commercial property set up",
+                'step1_subtitle' => "A few steps to describe the property, its shops or spaces, and rent — then you're ready to start managing it.",
+                'step1_intro' => "Tell us about the property. You'll describe the actual shops or spaces in the next step.",
+                'name_placeholder' => 'e.g. Westlands Shopping Centre or Greenview Mall',
+                'layout_heading' => 'How are the shops or spaces organized?',
+                'layout_options' => [
+                    'standalone' => [
+                        'label' => 'A standalone shop or commercial space',
+                        'description' => 'A single shop or commercial unit — no blocks needed.',
+                    ],
+                    'multiple_similar' => [
+                        'label' => 'Multiple shops or retail spaces',
+                        'description' => 'Several shops of the same or different types, no real blocks.',
+                    ],
+                    'blocks' => [
+                        'label' => 'A shopping mall or centre with floors, wings or sections',
+                        'description' => 'Shops organized into separate floors, wings or sections (e.g. Block A, Block B).',
+                    ],
+                ],
+            ],
+            'office' => [
+                'noun' => 'Office',
+                'noun_lower' => 'office',
+                'noun_plural_lower' => 'offices',
+                'step2_label' => 'Offices',
+                'block_noun_lower' => 'floor or section',
+                'block_count_label' => 'Number of floors or sections',
+                'step1_image' => 'category-office.png',
+                'step1_heading' => "Let's get your office property set up",
+                'step1_subtitle' => "A few steps to describe the property, its offices, and rent — then you're ready to start managing it.",
+                'step1_intro' => "Tell us about the property. You'll describe the actual offices in the next step.",
+                'name_placeholder' => 'e.g. Westlands Business Plaza or Riverside Office Park',
+                'layout_heading' => 'How are the offices organized?',
+                'layout_options' => [
+                    'standalone' => [
+                        'label' => 'A standalone office',
+                        'description' => 'A single office — no blocks needed.',
+                    ],
+                    'multiple_similar' => [
+                        'label' => 'Multiple individual offices',
+                        'description' => 'Several offices of the same or different sizes, no real blocks.',
+                    ],
+                    'blocks' => [
+                        'label' => 'An office building with floors or sections',
+                        'description' => 'Offices organized into separate floors or sections (e.g. Block A, Block B).',
+                    ],
+                ],
+            ],
+            'mixed_use' => [
+                'noun' => 'Space',
+                'noun_lower' => 'space',
+                'noun_plural_lower' => 'spaces',
+                'step2_label' => 'Rentable Spaces',
+                'block_noun_lower' => 'block or floor',
+                'block_count_label' => 'Number of blocks or floors',
+                'step1_image' => 'category-mixed-use.png',
+                'step1_heading' => "Let's get your mixed-use development set up",
+                'step1_subtitle' => "A few steps to describe the development, its residential, retail and office spaces, and rent — then you're ready to start managing it.",
+                'step1_intro' => "Tell us about the development. You'll describe its different spaces in the next step.",
+                'name_placeholder' => 'e.g. Greenview Mixed-Use Development',
+                'layout_heading' => 'How is this development organized?',
+                'layout_options' => [
+                    'standalone' => [
+                        'label' => 'A single building combining different uses',
+                        'description' => 'e.g. a shop with a residence above — no blocks needed.',
+                    ],
+                    'multiple_similar' => [
+                        'label' => 'Multiple spaces of different types',
+                        'description' => 'Residential units, shops and offices together, without separate named blocks.',
+                    ],
+                    'blocks' => [
+                        'label' => 'A development containing multiple types of rentable spaces',
+                        'description' => 'Residential units, shops and offices organized into separate blocks (e.g. Block A, Block B).',
+                    ],
+                ],
+            ],
+        ];
+
+        return array_replace($defaults, $overrides[$this->category] ?? []);
+    }
+
     public function render()
     {
         $user = Auth::user();
@@ -463,6 +644,7 @@ class Wizard extends Component
             'propertyTypes' => Property::typesForCategory($this->category),
             'houseTypes' => House::typesForCategory($this->category),
             'blockLabels' => $this->blockLabels(),
+            'copy' => $this->categoryCopy(),
         ]);
     }
 }

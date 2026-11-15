@@ -24,19 +24,25 @@ class PropertyProvisioningService
     /**
      * @param  array  $propertyData  landlord_id, name, type, address, latitude, longitude, photo_path (nullable)
      * @param  string  $layout  'standalone' | 'multiple_similar' | 'blocks' — 'standalone'/'multiple_similar'
-     *                          both get one implicit "Main" block; 'blocks' gets $blockCount auto-named ones.
+     *                          both get one implicit "Main" block; 'blocks' gets $blockCount named ones.
      * @param  int  $blockCount  only meaningful when $layout === 'blocks'
      * @param  array  $reviewUnits  flattened per-house rows, each carrying a 0-based 'block_index' into
      *                              the block list this method creates (in the same order every time —
      *                              one "Main" block, or blocks 0..$blockCount-1 for the 'blocks' layout)
+     * @param  array<int, string>  $blockNames  0-based index -> name, e.g. a landlord's own "Ground Floor"/
+     *                                          "East Wing" for an office or commercial building. Only
+     *                                          meaningful when $layout === 'blocks'; any index left out
+     *                                          (or the whole array left empty, the pre-existing behaviour
+     *                                          for every caller before this parameter existed) falls back
+     *                                          to the auto-lettered "Block A"/"Block B" naming.
      */
-    public function provision(array $propertyData, string $layout, int $blockCount, array $reviewUnits): Property
+    public function provision(array $propertyData, string $layout, int $blockCount, array $reviewUnits, array $blockNames = []): Property
     {
-        return DB::transaction(function () use ($propertyData, $layout, $blockCount, $reviewUnits) {
+        return DB::transaction(function () use ($propertyData, $layout, $blockCount, $reviewUnits, $blockNames) {
             $property = Property::create($propertyData + ['status' => 'active']);
 
             $blocks = $layout === 'blocks'
-                ? $this->createNamedBlocks($property, $blockCount)
+                ? $this->createNamedBlocks($property, $blockCount, $blockNames)
                 : [$property->blocks()->create(['name' => 'Main'])];
 
             foreach ($reviewUnits as $unit) {
@@ -61,13 +67,15 @@ class PropertyProvisioningService
         });
     }
 
-    /** @return Block[] */
-    private function createNamedBlocks(Property $property, int $count): array
+    /** @param  array<int, string>  $blockNames
+     * @return Block[] */
+    private function createNamedBlocks(Property $property, int $count, array $blockNames = []): array
     {
         $blocks = [];
 
         for ($i = 0; $i < $count; $i++) {
-            $blocks[] = $property->blocks()->create(['name' => 'Block '.$this->blockLetter($i)]);
+            $name = trim($blockNames[$i] ?? '');
+            $blocks[] = $property->blocks()->create(['name' => $name !== '' ? $name : 'Block '.$this->blockLetter($i)]);
         }
 
         return $blocks;

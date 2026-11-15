@@ -10,6 +10,7 @@ use App\Livewire\Properties\Index as PropertiesIndex;
 use App\Livewire\Properties\Wizard as PropertyWizard;
 use App\Models\Block;
 use App\Models\House;
+use App\Models\LandlordSetting;
 use App\Models\Property;
 use App\Models\Tenancy;
 use App\Models\User;
@@ -20,6 +21,36 @@ use Tests\TestCase;
 class LandlordPropertiesModuleTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_creating_a_property_prefills_address_from_the_landlords_own_registered_location(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        LandlordSetting::set($landlord->id, 'contract_landlord_address', 'Nyali, Mombasa');
+        LandlordSetting::set($landlord->id, 'contract_landlord_lat', '-4.0435');
+        LandlordSetting::set($landlord->id, 'contract_landlord_lon', '39.6682');
+
+        Livewire::actingAs($landlord)
+            ->test(PropertyForm::class)
+            ->assertSet('address', 'Nyali, Mombasa')
+            ->assertSet('latitude', -4.0435)
+            ->assertSet('longitude', 39.6682);
+    }
+
+    public function test_editing_an_existing_property_does_not_get_overwritten_by_the_landlords_registered_location(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        LandlordSetting::set($landlord->id, 'contract_landlord_address', 'Nyali, Mombasa');
+        $property = $landlord->properties()->firstOrFail();
+        $property->update(['address' => 'Westlands, Nairobi']);
+
+        Livewire::actingAs($landlord)
+            ->test(PropertyForm::class, ['property' => $property])
+            ->assertSet('address', 'Westlands, Nairobi');
+    }
 
     public function test_property_show_tabs_all_render(): void
     {
@@ -68,6 +99,7 @@ class LandlordPropertiesModuleTest extends TestCase
 
         $landlordB = User::create(['name' => 'Landlord B', 'email' => 'lb@test.test', 'password' => bcrypt('password')]);
         $landlordB->assignRole('landlord');
+        app(\App\Services\PaymentGatewayService::class)->confirmCollectionMethod($landlordB->id, 'manual');
 
         $this->actingAs($landlordB)->get(route('manage.properties.show', $property))->assertForbidden();
         $this->actingAs($landlordB)->get(route('manage.houses.show', $house))->assertForbidden();
@@ -206,6 +238,72 @@ class LandlordPropertiesModuleTest extends TestCase
             ->assertHasNoErrors();
 
         $this->assertEquals('house', $house->fresh()->type);
+    }
+
+    /** Shops/stalls/offices don't have bedrooms — part of the deeper category-adaptation work, this mirrors the same conditional already applied in Properties\Wizard's own Rentable Spaces step. */
+    public function test_the_bedrooms_field_is_hidden_when_editing_a_shop_but_shown_for_a_house(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(HouseForm::class, ['house' => $house])
+            ->set('type', 'shop')
+            ->assertDontSee('Bedrooms');
+
+        Livewire::actingAs($landlord)
+            ->test(HouseForm::class, ['house' => $house])
+            ->set('type', 'house')
+            ->assertSee('Bedrooms (optional)');
+    }
+
+    /**
+     * Regression test for the stale-bedrooms defect: switching an existing
+     * house to shop/stall/office must clear bedrooms in Livewire state —
+     * not just hide the field — and that null must actually be what gets
+     * saved, not whatever residential count the house previously had.
+     */
+    public function test_switching_a_house_to_a_non_residential_type_clears_and_saves_null_bedrooms(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        foreach (['shop', 'stall', 'office'] as $nonResidentialType) {
+            $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+            $house->update(['type' => 'two_bedroom', 'bedrooms' => 2]);
+
+            Livewire::actingAs($landlord)
+                ->test(HouseForm::class, ['house' => $house->fresh()])
+                ->set('type', $nonResidentialType)
+                ->assertSet('bedrooms', null)
+                ->call('save')
+                ->assertHasNoErrors();
+
+            $fresh = $house->fresh();
+            $this->assertSame($nonResidentialType, $fresh->type);
+            $this->assertNull($fresh->bedrooms);
+        }
+    }
+
+    /** Residential-to-residential switches on the standalone edit form must keep recalculating exactly as before. */
+    public function test_switching_a_house_between_residential_types_still_recalculates_bedrooms_correctly(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $house = House::whereHas('block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->vacant()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(HouseForm::class, ['house' => $house])
+            ->set('type', 'two_bedroom')
+            ->assertSet('bedrooms', 2)
+            ->set('type', 'four_bedroom')
+            ->assertSet('bedrooms', 4)
+            // 'house' has no implied count — a manually entered value must survive the switch.
+            ->set('bedrooms', 7)
+            ->set('type', 'house')
+            ->assertSet('bedrooms', 7);
     }
 
     public function test_editing_a_reserved_house_does_not_revert_its_status(): void

@@ -62,15 +62,17 @@
                         </div>
                     </div>
 
-                    @php $impliedBedrooms = \App\Models\House::bedroomsImpliedByType($type); @endphp
-                    <div>
-                        <x-input-label for="bedrooms" value="Bedrooms (optional)" />
-                        <x-text-input id="bedrooms" type="number" wire:model="bedrooms" class="mt-1 block w-full" :disabled="$impliedBedrooms !== null" />
-                        @if ($impliedBedrooms !== null)
-                            <p class="mt-1 text-xs text-brand-slate">Set automatically from the unit type above.</p>
-                        @endif
-                        <x-input-error :messages="$errors->get('bedrooms')" class="mt-1" />
-                    </div>
+                    @if (\App\Models\House::isResidentialType($type))
+                        @php $impliedBedrooms = \App\Models\House::bedroomsImpliedByType($type); @endphp
+                        <div>
+                            <x-input-label for="bedrooms" value="Bedrooms (optional)" />
+                            <x-text-input id="bedrooms" type="number" wire:model="bedrooms" class="mt-1 block w-full" :disabled="$impliedBedrooms !== null" />
+                            @if ($impliedBedrooms !== null)
+                                <p class="mt-1 text-xs text-brand-slate">Set automatically from the unit type above.</p>
+                            @endif
+                            <x-input-error :messages="$errors->get('bedrooms')" class="mt-1" />
+                        </div>
+                    @endif
 
                     <div>
                         <x-input-label for="status" value="Status" />

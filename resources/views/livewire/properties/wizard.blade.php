@@ -69,10 +69,10 @@
                     <div class="flex items-center justify-between">
                         @if ($step === 1)
                             <x-page-banner
-                                image="modern-villa-01.jpg"
+                                :image="$copy['step1_image']"
                                 eyebrow="Add Property"
-                                title="Let's get your property set up"
-                                subtitle="A few steps to describe the property, its units, and rent — then you're ready to start managing it."
+                                :title="$copy['step1_heading']"
+                                :subtitle="$copy['step1_subtitle']"
                                 class="flex-1"
                             />
                         @endif
@@ -85,7 +85,7 @@
                     <div class="flex items-center gap-2 text-xs font-medium flex-wrap">
                         <span class="px-2 py-1 rounded-full {{ $step >= 1 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">1. Property</span>
                         <span class="text-brand-slate">—</span>
-                        <span class="px-2 py-1 rounded-full {{ $step >= 2 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">2. Rentable Spaces</span>
+                        <span class="px-2 py-1 rounded-full {{ $step >= 2 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">2. {{ $copy['step2_label'] }}</span>
                         <span class="text-brand-slate">—</span>
                         <span class="px-2 py-1 rounded-full {{ $step >= 3 ? 'bg-navy text-white' : 'bg-gray-100 text-brand-slate' }}">3. Rent &amp; Deposit</span>
                         <span class="text-brand-slate">—</span>
@@ -95,7 +95,7 @@
                 {{-- ============================= STEP 1 ============================= --}}
                 @if ($step === 1)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
-                        <p class="text-sm text-brand-slate">Tell us about the property. You'll describe the actual units in the next step.</p>
+                        <p class="text-sm text-brand-slate">{{ $copy['step1_intro'] }}</p>
 
                         @if ($landlords->isNotEmpty())
                             <div>
@@ -123,7 +123,7 @@
 
                             <div>
                                 <x-input-label for="name" value="Property Name" />
-                                <x-text-input id="name" type="text" wire:model="name" class="mt-1 block w-full" placeholder="e.g. Greenview Villas" />
+                                <x-text-input id="name" type="text" wire:model="name" class="mt-1 block w-full" :placeholder="$copy['name_placeholder']" />
                                 <x-input-error :messages="$errors->get('name')" class="mt-1" />
                             </div>
                         </div>
@@ -155,7 +155,7 @@
                         <p class="text-xs text-brand-slate">Purchase price, valuation and other investment details can be added later from the property's detailed edit screen — they're not needed to list it.</p>
 
                         <div class="flex items-center gap-3">
-                            <x-primary-button type="button" wire:click="goToStep2">Next: Rentable Spaces</x-primary-button>
+                            <x-primary-button type="button" wire:click="goToStep2">Next: {{ $copy['step2_label'] }}</x-primary-button>
                         </div>
                     </div>
                 @endif
@@ -164,27 +164,27 @@
                 @if ($step === 2)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
                         <div>
-                            <x-input-label value="How are the rentable spaces organized?" />
+                            <x-input-label :value="$copy['layout_heading']" />
                             <div class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <label class="flex items-start gap-2 border rounded-md p-3 cursor-pointer {{ $layout === 'standalone' ? 'border-teal bg-teal/5' : 'border-brand-border' }}">
                                     <input type="radio" wire:model.live="layout" value="standalone" class="mt-1">
                                     <span>
-                                        <span class="block text-sm font-medium text-charcoal">One standalone property</span>
-                                        <span class="block text-xs text-brand-slate">A single house, maisonette or unit — no blocks needed.</span>
+                                        <span class="block text-sm font-medium text-charcoal">{{ $copy['layout_options']['standalone']['label'] }}</span>
+                                        <span class="block text-xs text-brand-slate">{{ $copy['layout_options']['standalone']['description'] }}</span>
                                     </span>
                                 </label>
                                 <label class="flex items-start gap-2 border rounded-md p-3 cursor-pointer {{ $layout === 'multiple_similar' ? 'border-teal bg-teal/5' : 'border-brand-border' }}">
                                     <input type="radio" wire:model.live="layout" value="multiple_similar" class="mt-1">
                                     <span>
-                                        <span class="block text-sm font-medium text-charcoal">Multiple similar houses or villas</span>
-                                        <span class="block text-xs text-brand-slate">Several units of the same or different types, no real blocks.</span>
+                                        <span class="block text-sm font-medium text-charcoal">{{ $copy['layout_options']['multiple_similar']['label'] }}</span>
+                                        <span class="block text-xs text-brand-slate">{{ $copy['layout_options']['multiple_similar']['description'] }}</span>
                                     </span>
                                 </label>
                                 <label class="flex items-start gap-2 border rounded-md p-3 cursor-pointer {{ $layout === 'blocks' ? 'border-teal bg-teal/5' : 'border-brand-border' }}">
                                     <input type="radio" wire:model.live="layout" value="blocks" class="mt-1">
                                     <span>
-                                        <span class="block text-sm font-medium text-charcoal">An apartment building with blocks</span>
-                                        <span class="block text-xs text-brand-slate">Units organized into separate blocks (e.g. Block A, Block B).</span>
+                                        <span class="block text-sm font-medium text-charcoal">{{ $copy['layout_options']['blocks']['label'] }}</span>
+                                        <span class="block text-xs text-brand-slate">{{ $copy['layout_options']['blocks']['description'] }}</span>
                                     </span>
                                 </label>
                             </div>
@@ -193,19 +193,38 @@
 
                         @if ($layout === 'blocks')
                             <div>
-                                <x-input-label for="block_count" value="Number of blocks" />
+                                <x-input-label for="block_count" :value="$copy['block_count_label']" />
                                 <input type="number" id="block_count" wire:model.live="block_count" min="1" max="50" class="mt-1 block w-32 rounded-md border-brand-border">
-                                <p class="text-xs text-brand-slate mt-1">Blocks are named automatically ({{ implode(', ', array_slice($blockLabels, 0, 3)) }}{{ count($blockLabels) > 3 ? ', …' : '' }}) — you don't need to name them.</p>
                                 <x-input-error :messages="$errors->get('block_count')" class="mt-1" />
+                            </div>
+
+                            <div>
+                                <x-input-label :value="'Name each '.$copy['block_noun_lower'].' (optional)'" />
+                                <p class="text-xs text-brand-slate mt-1">Named automatically ({{ implode(', ', array_slice($blockLabels, 0, 3)) }}{{ count($blockLabels) > 3 ? ', …' : '' }}) unless you give one your own name below — e.g. "Ground Floor" or "East Wing".</p>
+                                <div class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    @foreach ($blockLabels as $index => $label)
+                                        <x-text-input type="text" wire:model="block_names.{{ $index }}" class="block w-full text-sm" :placeholder="$label" />
+                                    @endforeach
+                                </div>
                             </div>
                         @endif
 
                         <div class="space-y-4">
                             @foreach ($groups as $i => $group)
+                                @php
+                                    // Keyed by this group's own unit_type, not the overall
+                                    // category — Commercial offers both Shop and Stall,
+                                    // and Mixed-use offers every type, so one property-wide
+                                    // noun can't describe every group correctly.
+                                    $groupNoun = \App\Models\House::groupNoun($group['unit_type']);
+                                    $groupNounLower = \Illuminate\Support\Str::lower($groupNoun);
+                                    $groupNounPluralLower = \Illuminate\Support\Str::lower(\Illuminate\Support\Str::plural($groupNoun));
+                                    $groupIsResidential = \App\Models\House::isResidentialType($group['unit_type']);
+                                @endphp
                                 <div class="border border-brand-border rounded-md p-4 space-y-3" wire:key="group-{{ $i }}">
                                     <div class="flex items-center justify-between">
                                         <p class="text-sm font-medium text-charcoal">
-                                            Unit group {{ $i + 1 }}
+                                            {{ $groupNoun }} group {{ $i + 1 }}
                                             @if ($layout === 'blocks')
                                                 — {{ $blockLabels[$group['block_index']] ?? 'Block' }}
                                             @endif
@@ -217,7 +236,7 @@
 
                                     @if ($layout === 'blocks')
                                         <div>
-                                            <x-input-label value="Which block?" />
+                                            <x-input-label :value="'Which '.$copy['block_noun_lower'].'?'" />
                                             <select wire:model="groups.{{ $i }}.block_index" class="mt-1 block w-full rounded-md border-brand-border">
                                                 @foreach ($blockLabels as $index => $label)
                                                     <option value="{{ $index }}">{{ $label }}</option>
@@ -229,7 +248,7 @@
                                     @php $groupImpliedBedrooms = \App\Models\House::bedroomsImpliedByType($group['unit_type']); @endphp
                                     <div class="grid grid-cols-2 gap-4">
                                         <div>
-                                            <x-input-label value="Unit type" />
+                                            <x-input-label :value="$groupNoun.' Type'" />
                                             <select wire:model.live="groups.{{ $i }}.unit_type" class="mt-1 block w-full rounded-md border-brand-border">
                                                 @foreach ($houseTypes as $value)
                                                     <option value="{{ $value }}">{{ \App\Models\House::typeLabel($value) }}</option>
@@ -237,30 +256,32 @@
                                             </select>
                                             <x-input-error :messages="$errors->get('groups.'.$i.'.unit_type')" class="mt-1" />
                                         </div>
-                                        <div>
-                                            <x-input-label value="Bedrooms (optional)" />
-                                            <input type="number" wire:model="groups.{{ $i }}.bedrooms" min="0" max="20" class="mt-1 block w-full rounded-md border-brand-border" @disabled($groupImpliedBedrooms !== null)>
-                                            @if ($groupImpliedBedrooms !== null)
-                                                <p class="text-xs text-brand-slate mt-1">Set automatically from the unit type.</p>
-                                            @endif
-                                        </div>
+                                        @if ($groupIsResidential)
+                                            <div>
+                                                <x-input-label value="Bedrooms (optional)" />
+                                                <input type="number" wire:model="groups.{{ $i }}.bedrooms" min="0" max="20" class="mt-1 block w-full rounded-md border-brand-border" @disabled($groupImpliedBedrooms !== null)>
+                                                @if ($groupImpliedBedrooms !== null)
+                                                    <p class="text-xs text-brand-slate mt-1">Set automatically from the {{ $groupNounLower }} type.</p>
+                                                @endif
+                                            </div>
+                                        @endif
                                     </div>
 
                                     <div class="grid grid-cols-2 gap-4">
                                         <div>
-                                            <x-input-label value="Number of units" />
+                                            <x-input-label :value="'Number of '.$groupNounPluralLower" />
                                             <input type="number" wire:model.live="groups.{{ $i }}.count" min="1" max="50" class="mt-1 block w-full rounded-md border-brand-border" @disabled($layout === 'standalone')>
                                             <x-input-error :messages="$errors->get('groups.'.$i.'.count')" class="mt-1" />
                                         </div>
                                         <div>
-                                            <x-input-label value="Starting unit number" />
+                                            <x-input-label :value="'Starting '.$groupNounLower.' number'" />
                                             <x-text-input type="text" wire:model="groups.{{ $i }}.starting_number" class="mt-1 block w-full" />
                                             <p class="text-xs text-brand-slate mt-1">Editable in the review step too.</p>
                                         </div>
                                     </div>
 
                                     <div>
-                                        <x-input-label value="Monthly rent per unit (KSh)" />
+                                        <x-input-label :value="'Monthly rent per '.$groupNounLower.' (KSh)'" />
                                         <input type="number" wire:model="groups.{{ $i }}.monthly_rent" min="0" step="0.01" class="mt-1 block w-full rounded-md border-brand-border">
                                         <x-input-error :messages="$errors->get('groups.'.$i.'.monthly_rent')" class="mt-1" />
                                     </div>
@@ -288,7 +309,7 @@
                         </div>
 
                         @if ($layout !== 'standalone')
-                            <button type="button" wire:click="addGroup" class="text-sm text-teal hover:underline font-medium">+ Add another unit type or rent category</button>
+                            <button type="button" wire:click="addGroup" class="text-sm text-teal hover:underline font-medium">+ Add another {{ $copy['noun_lower'] }} type or rent category</button>
                         @endif
 
                         <div class="flex items-center gap-3 pt-2">
@@ -301,13 +322,17 @@
                 {{-- ============================= STEP 3 ============================= --}}
                 @if ($step === 3)
                     <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-5">
-                        <p class="text-sm text-brand-slate">Set the deposit arrangement for each unit group. This only records what's <strong>required</strong> — nothing is marked as received until an actual payment is recorded later, when a tenant moves in.</p>
+                        <p class="text-sm text-brand-slate">Set the deposit arrangement for each {{ $copy['noun_lower'] }} group. This only records what's <strong>required</strong> — nothing is marked as received until an actual payment is recorded later, when a tenant moves in.</p>
 
                         <div class="space-y-4">
                             @foreach ($groups as $i => $group)
+                                @php
+                                    $groupNoun = \App\Models\House::groupNoun($group['unit_type']);
+                                    $groupNounLower = \Illuminate\Support\Str::lower($groupNoun);
+                                @endphp
                                 <div class="border border-brand-border rounded-md p-4 space-y-3" wire:key="deposit-group-{{ $i }}">
                                     <p class="text-sm font-medium text-charcoal">
-                                        Unit group {{ $i + 1 }} — {{ \Illuminate\Support\Str::headline($group['unit_type']) }}, KSh {{ number_format((float) ($group['monthly_rent'] ?: 0), 2) }}/month
+                                        {{ $groupNoun }} group {{ $i + 1 }} — {{ \App\Models\House::typeLabel($group['unit_type']) }}, KSh {{ number_format((float) ($group['monthly_rent'] ?: 0), 2) }}/month
                                     </p>
 
                                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -329,7 +354,7 @@
                                                 @endfor
                                             </select>
                                             <p class="text-xs text-brand-slate mt-1">
-                                                Deposit will be set to KSh {{ number_format((float) ($group['monthly_rent'] ?: 0) * (int) $group['deposit_months']) }} per unit
+                                                Deposit will be set to KSh {{ number_format((float) ($group['monthly_rent'] ?: 0) * (int) $group['deposit_months']) }} per {{ $groupNounLower }}
                                                 ({{ $group['deposit_months'] }} &times; KSh {{ number_format((float) ($group['monthly_rent'] ?: 0)) }} monthly rent).
                                             </p>
                                             <x-input-error :messages="$errors->get('groups.'.$i.'.deposit_months')" class="mt-1" />
@@ -366,7 +391,7 @@
                         <div>
                             <h3 class="text-sm font-semibold text-charcoal">Review before saving</h3>
                             <p class="text-xs text-brand-slate mt-1">
-                                {{ $name }} — {{ \Illuminate\Support\Str::headline($type) }} — {{ count($reviewUnits) }} rentable {{ Str::plural('space', count($reviewUnits)) }}, all vacant by default.
+                                {{ $name }} — {{ \App\Models\Property::typeLabel($type) }} — {{ count($reviewUnits) }} rentable {{ Str::plural('space', count($reviewUnits)) }}, all vacant by default.
                             </p>
                         </div>
 
@@ -379,7 +404,7 @@
                                         @if ($layout === 'blocks')
                                             <th class="text-left px-3 py-2 font-medium">Block</th>
                                         @endif
-                                        <th class="text-left px-3 py-2 font-medium">Unit #</th>
+                                        <th class="text-left px-3 py-2 font-medium">{{ $copy['noun'] }} #</th>
                                         <th class="text-left px-3 py-2 font-medium">Type</th>
                                         <th class="text-right px-3 py-2 font-medium">Rent (KSh)</th>
                                         <th class="text-right px-3 py-2 font-medium">Deposit (KSh)</th>

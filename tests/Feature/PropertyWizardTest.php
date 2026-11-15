@@ -149,6 +149,260 @@ class PropertyWizardTest extends TestCase
         $this->assertContains('shop', $types);
     }
 
+    /**
+     * No category chosen is the only way any pre-existing test (none of
+     * which ever call chooseCategory) reaches step 1+ — this pins that
+     * state to literally the same wording the wizard always showed, so the
+     * category-aware copy work changes nothing for them.
+     */
+    public function test_no_category_chosen_shows_the_original_unit_terminology(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'residential')
+            ->set('type', 'apartment')
+            ->set('name', 'Test Property')
+            ->call('goToStep2');
+
+        $component->assertSee('Unit group 1')
+            ->assertSee('Number of units')
+            ->assertSee('Starting unit number')
+            ->assertSee('Monthly rent per unit (KSh)')
+            ->assertSee('How are the rentable spaces organized?');
+    }
+
+    public function test_commercial_category_adapts_wizard_terminology_throughout(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'commercial');
+
+        $component->assertSee("Let's get your commercial property set up")
+            ->assertSee('Westlands Shopping Centre');
+
+        $component->set('name', 'Greenview Mall')
+            ->call('goToStep2');
+
+        $component->assertSee('Shop group 1')
+            ->assertSee('Number of shops')
+            ->assertSee('Starting shop number')
+            ->assertSee('Monthly rent per shop (KSh)')
+            ->assertSee('How are the shops or spaces organized?')
+            ->assertSee('A shopping mall or centre with floors, wings or sections')
+            ->assertDontSee('Unit group 1');
+    }
+
+    public function test_commercial_and_office_groups_never_show_a_bedrooms_field(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $commercial = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'commercial')
+            ->set('name', 'Greenview Mall')
+            ->call('goToStep2');
+        $commercial->assertDontSee('Bedrooms')->assertSee('Shop Type');
+
+        $office = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'office')
+            ->set('name', 'Westlands Business Plaza')
+            ->call('goToStep2');
+        $office->assertDontSee('Bedrooms')->assertSee('Office Type');
+    }
+
+    /**
+     * Regression test for the stale-bedrooms defect: switching a group from
+     * a residential type (which implies a bedroom count) to shop/stall/
+     * office must clear bedrooms immediately, in Livewire state — not just
+     * hide the field — otherwise the saved House record keeps a bedroom
+     * count that makes no sense for a non-residential space.
+     */
+    public function test_switching_a_group_to_a_non_residential_type_clears_its_bedrooms(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        foreach (['shop', 'stall', 'office'] as $nonResidentialType) {
+            $propertyName = "Stale Bedrooms Fix {$nonResidentialType}";
+
+            $component = Livewire::actingAs($landlord)->test(Wizard::class)
+                ->call('chooseCategory', 'mixed_use')
+                ->set('name', $propertyName)
+                ->call('goToStep2')
+                ->set('groups.0.unit_type', 'two_bedroom'); // implies bedrooms = 2
+
+            $component->assertSet('groups.0.bedrooms', 2);
+
+            $component->set('groups.0.unit_type', $nonResidentialType)
+                ->assertSet('groups.0.bedrooms', null)
+                ->set('groups.0.monthly_rent', '20000')
+                ->call('goToStep3')
+                ->set('groups.0.deposit_mode', 'none')
+                ->call('goToStep4')
+                ->call('save')
+                ->assertHasNoErrors();
+
+            $property = Property::where('name', $propertyName)->firstOrFail();
+            $house = $property->houses()->firstOrFail();
+
+            $this->assertSame($nonResidentialType, $house->type);
+            $this->assertNull($house->bedrooms);
+        }
+    }
+
+    /** Residential-to-residential switches must keep working exactly as before: implied counts recalculate, and a type with no implied count never overwrites a manually entered value. */
+    public function test_switching_a_group_between_residential_types_still_recalculates_bedrooms_correctly(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'residential')
+            ->set('name', 'Residential Bedroom Recalc')
+            ->call('goToStep2')
+            ->set('groups.0.unit_type', 'two_bedroom')
+            ->assertSet('groups.0.bedrooms', 2)
+            ->set('groups.0.unit_type', 'four_bedroom')
+            ->assertSet('groups.0.bedrooms', 4);
+
+        // 'house' has no implied count — a manually entered value must survive the switch.
+        $component->set('groups.0.bedrooms', 7)
+            ->set('groups.0.unit_type', 'house')
+            ->assertSet('groups.0.bedrooms', 7);
+    }
+
+    /**
+     * Category filtering only narrows which options the dropdown *offers*
+     * (Property::typesForCategory()/House::typesForCategory() are never a
+     * hard gate — see their own docblocks); it must never become a way to
+     * smuggle a genuinely invalid type past validation. Both goToStep3()
+     * (via step2Rules()) and save() validate groups.*.unit_type /
+     * reviewUnits.*.type against the full House::TYPES list regardless of
+     * category, so a tampered value outside that list is still rejected.
+     */
+    public function test_a_tampered_unit_type_outside_house_types_is_still_rejected_regardless_of_category(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'commercial')
+            ->set('name', 'Greenview Mall')
+            ->call('goToStep2')
+            ->set('groups.0.unit_type', 'penthouse_suite') // not a real House::TYPES value
+            ->set('groups.0.monthly_rent', '10000')
+            ->call('goToStep3')
+            ->assertHasErrors(['groups.0.unit_type'])
+            ->assertSet('step', 2); // rejected — never advanced past Rentable Spaces
+    }
+
+    /**
+     * Block.name is already a free-text column — no migration needed for
+     * this. A landlord can override the auto-lettered "Block A"/"Block B"
+     * default with their own name (e.g. a mall's "Ground Floor"), and it's
+     * what actually gets saved, not the auto-generated fallback.
+     */
+    public function test_a_custom_block_name_is_saved_instead_of_the_auto_generated_one(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'commercial')
+            ->set('name', 'Greenview Mall')
+            ->call('goToStep2')
+            ->set('layout', 'blocks')
+            ->set('block_count', 2)
+            ->set('block_names.0', 'Ground Floor')
+            ->set('groups.0.unit_type', 'shop')
+            ->set('groups.0.monthly_rent', '30000')
+            ->set('groups.0.block_index', 0)
+            ->call('goToStep3')
+            ->set('groups.0.deposit_mode', 'none')
+            ->call('goToStep4')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $property = Property::where('name', 'Greenview Mall')->firstOrFail();
+        $blockNames = $property->blocks()->pluck('name')->all();
+
+        $this->assertContains('Ground Floor', $blockNames);
+        $this->assertContains('Block B', $blockNames); // block 1 left blank, falls back to the auto-lettered default
+    }
+
+    public function test_office_category_adapts_wizard_terminology_throughout(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'office')
+            ->set('name', 'Westlands Business Plaza')
+            ->call('goToStep2');
+
+        $component->assertSee('Office group 1')
+            ->assertSee('Number of offices')
+            ->assertSee('Starting office number')
+            ->assertSee('Monthly rent per office (KSh)')
+            ->assertSee('How are the offices organized?');
+    }
+
+    public function test_mixed_use_category_adapts_wizard_terminology_throughout(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'mixed_use')
+            ->set('name', 'Greenview Mixed-Use Development');
+
+        $component->assertSee('Next: Rentable Spaces');
+
+        $component->call('goToStep2')
+            ->assertSee('How is this development organized?');
+    }
+
+    /**
+     * The core of the deeper category work: a Mixed-use property's fields
+     * are driven by each GROUP's own unit_type, not one property-wide
+     * noun — an apartment group still behaves exactly like Residential
+     * (Bedrooms shown, "Unit" terminology) while a shop group in the very
+     * same property shows "Shop" terminology and no Bedrooms field at all.
+     */
+    public function test_mixed_use_groups_each_adapt_independently_to_their_own_unit_type(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(Wizard::class)
+            ->call('chooseCategory', 'mixed_use')
+            ->set('name', 'Greenview Mixed-Use Development')
+            ->call('goToStep2')
+            ->set('layout', 'multiple_similar');
+
+        // Group 1 defaults to a residential type — Residential's own
+        // terminology and Bedrooms field, unchanged.
+        $component->assertSee('Unit group 1')
+            ->assertSee('Bedrooms (optional)');
+
+        $component->call('addGroup')
+            ->set('groups.1.unit_type', 'shop');
+
+        $component->assertSee('Shop group 2')
+            ->assertSee('Shop Type')
+            ->assertSee('Number of shops')
+            ->assertSee('Starting shop number')
+            ->assertSee('Monthly rent per shop (KSh)');
+
+        // Still exactly one Bedrooms field on the page — the shop group
+        // never grew one of its own.
+        $this->assertEquals(1, substr_count($component->html(), 'Bedrooms (optional)'));
+    }
+
     public function test_standalone_maisonette_wizard_never_exposes_a_block_step_and_auto_creates_one_block(): void
     {
         $this->seed();

@@ -57,11 +57,21 @@ class Form extends Component
     /**
      * Only the explicitly numbered types (one/two/three/four bedroom) imply
      * a bedroom count — switching to one of those always sets it to match,
-     * same as picking it fresh. Anything else (including 'other') is left
-     * alone so a manually entered value is never silently overwritten.
+     * same as picking it fresh. Anything else residential (including
+     * 'other') is left alone so a manually entered value is never silently
+     * overwritten. Switching to a non-residential type (shop/stall/office)
+     * always clears it — that field is hidden for those types in the
+     * blade, so a stale count from a previous residential selection must
+     * not survive into the saved House record.
      */
     public function updatedType(): void
     {
+        if (! House::isResidentialType($this->type)) {
+            $this->bedrooms = null;
+
+            return;
+        }
+
         $implied = House::bedroomsImpliedByType($this->type);
 
         if ($implied !== null) {

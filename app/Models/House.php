@@ -52,6 +52,38 @@ class House extends Model
         return $types === null ? self::TYPES : [...$types, 'other'];
     }
 
+    /**
+     * The only TYPES values Bedrooms genuinely never applies to — kept as
+     * an explicit exclusion list (rather than the inverse) so 'other' and
+     * any future type default to still showing the field, exactly as every
+     * type already behaved before categories existed.
+     */
+    public const NON_RESIDENTIAL_TYPES = ['shop', 'stall', 'office'];
+
+    public static function isResidentialType(string $type): bool
+    {
+        return ! in_array($type, self::NON_RESIDENTIAL_TYPES, true);
+    }
+
+    /**
+     * Properties\Wizard's Rentable Spaces/Review/Deposit steps describe
+     * each unit *group* using this, rather than the overall category's own
+     * noun — the two only ever coincide for Residential/Office (where
+     * every offered type maps to the same word anyway). Commercial offers
+     * both Shop and Stall, and Mixed-use offers everything, so a single
+     * property-wide noun can't describe every group's own rentable-space
+     * type correctly; this is keyed by the group's actual unit_type instead.
+     */
+    public static function groupNoun(string $type): string
+    {
+        return match ($type) {
+            'shop' => 'Shop',
+            'stall' => 'Stall',
+            'office' => 'Office',
+            default => 'Unit',
+        };
+    }
+
     /** Str::headline('sq') would read "Sq", not the initialism landlords actually expect. */
     public static function typeLabel(string $type): string
     {
