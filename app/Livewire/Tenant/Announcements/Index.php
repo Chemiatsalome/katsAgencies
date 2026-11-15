@@ -5,6 +5,7 @@ namespace App\Livewire\Tenant\Announcements;
 use App\Models\AppNotification;
 use App\Models\Message;
 use App\Services\MessageService;
+use App\Services\NotificationService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -15,9 +16,21 @@ class Index extends Component
 {
     use WithPagination;
 
+    /**
+     * Both the landlord-initiated broadcast this page was originally built
+     * for and a tenant-initiated conversation (F-2) live side by side here
+     * as the same event_type set — a tenant's own just-sent message is
+     * simply the other direction of the same Message/MessageReply thread.
+     */
+    private const DISPLAYED_EVENT_TYPES = ['landlord_message', 'tenant_message'];
+
     public ?int $expandedMessageId = null;
 
     public string $replyBody = '';
+
+    public string $newSubject = '';
+
+    public string $newBody = '';
 
     public function toggleExpand(int $announcementId): void
     {
@@ -32,7 +45,7 @@ class Index extends Component
 
         $announcement = AppNotification::where('notifiable_type', $tenant->getMorphClass())
             ->where('notifiable_id', $tenant->id)
-            ->where('event_type', 'landlord_message')
+            ->whereIn('event_type', self::DISPLAYED_EVENT_TYPES)
             ->where('related_type', Message::class)
             ->findOrFail($announcementId);
 
@@ -47,13 +60,77 @@ class Index extends Component
         session()->flash('status', 'Reply sent.');
     }
 
+    /**
+     * F-2: a tenant starting a brand-new conversation, rather than replying
+     * to one the landlord opened. The recipient is never taken from client
+     * input — it is always the landlord responsible for the tenant's own
+     * current tenancy, the same resolution Tenant\Profile uses — so a
+     * tenant can never address a message at an arbitrary account. A tenant
+     * with no active tenancy (nothing to resolve a responsible landlord
+     * from) cannot start a conversation at all.
+     */
+    public function sendMessage(): void
+    {
+        $tenant = Auth::user()->tenant;
+        abort_if(! $tenant, 404);
+
+        $this->validate([
+            'newSubject' => ['required', 'string', 'max:255'],
+            'newBody' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $tenancy = $tenant->currentTenancy();
+
+        if (! $tenancy) {
+            $this->addError('newBody', 'You have no active tenancy to message your landlord about.');
+
+            return;
+        }
+
+        $tenancy->load('house.block.property.landlord');
+        $property = $tenancy->house->block->property;
+
+        $message = Message::create([
+            'sender_id' => $property->landlord_id,
+            'tenant_id' => $tenant->id,
+            'scope' => 'tenant_initiated',
+            'subject' => $this->newSubject,
+            'body' => $this->newBody,
+        ]);
+
+        $notifications = app(NotificationService::class);
+
+        // Landlord plus every manager assigned to this property — the same
+        // audience Messages\Index already lets reply to any thread of
+        // theirs, with no narrower messaging permission to enforce (see
+        // PermissionSeeder::managerPermissionGroups(): there isn't one).
+        $notifications->notifyPropertyStakeholders(
+            $property,
+            'tenant_message',
+            $this->newSubject,
+            $this->newBody,
+            ['in_app'],
+            $message,
+        );
+
+        // So the tenant's own new thread appears in their own list right
+        // away, exactly like the one it mirrors for the landlord/manager
+        // side above — created already-read, since they obviously just
+        // wrote it themselves.
+        $notifications->notify($tenant, 'tenant_message', $this->newSubject, $this->newBody, ['in_app'], $message);
+        $notifications->markRelatedRead($message, $tenant, 'tenant_message');
+
+        $this->reset(['newSubject', 'newBody']);
+        session()->flash('status', 'Message sent to your landlord.');
+    }
+
     public function render()
     {
         $tenant = Auth::user()->tenant;
 
         $query = AppNotification::where('notifiable_type', $tenant?->getMorphClass())
             ->where('notifiable_id', $tenant?->id ?? 0)
-            ->where('event_type', 'landlord_message');
+            ->whereIn('event_type', self::DISPLAYED_EVENT_TYPES);
 
         // Unlike the general Notifications inbox, announcements have no
         // per-item "mark read" control — simply viewing this list is the

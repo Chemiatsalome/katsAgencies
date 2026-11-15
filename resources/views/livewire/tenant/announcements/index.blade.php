@@ -10,6 +10,24 @@
                     <div class="rounded-md bg-teal/10 border border-teal/30 text-teal px-4 py-2 text-sm">{{ session('status') }}</div>
                 @endif
 
+                <form wire:submit="sendMessage" class="bg-white shadow-sm rounded-lg border border-brand-border p-5 space-y-3">
+                    <h3 class="text-sm font-semibold text-charcoal">Message Your Landlord</h3>
+
+                    <div>
+                        <x-input-label for="newSubject" value="Subject" />
+                        <x-text-input id="newSubject" type="text" wire:model="newSubject" class="mt-1 block w-full" />
+                        <x-input-error :messages="$errors->get('newSubject')" class="mt-1" />
+                    </div>
+
+                    <div>
+                        <x-input-label for="newBody" value="Message" />
+                        <textarea id="newBody" wire:model="newBody" rows="3" class="mt-1 block w-full rounded-md border-brand-border"></textarea>
+                        <x-input-error :messages="$errors->get('newBody')" class="mt-1" />
+                    </div>
+
+                    <x-primary-button type="submit">Send</x-primary-button>
+                </form>
+
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border divide-y divide-gray-100">
                     @forelse ($announcements as $announcement)
                         <div wire:key="announcement-{{ $announcement->id }}" class="px-5 py-4">

@@ -17,6 +17,9 @@ use Livewire\Attributes\Layout;
 #[Layout('layouts.admin')]
 class Index extends Component
 {
+    /** See Tenant\Announcements\Index::DISPLAYED_EVENT_TYPES — same reasoning, mirrored for the landlord/manager side. */
+    private const DISPLAYED_EVENT_TYPES = ['landlord_message', 'tenant_message'];
+
     public string $scope = 'tenant';
 
     public ?int $tenant_id = null;
@@ -106,7 +109,7 @@ class Index extends Component
 
     public function reply(int $announcementId): void
     {
-        $announcement = AppNotification::where('event_type', 'landlord_message')
+        $announcement = AppNotification::whereIn('event_type', self::DISPLAYED_EVENT_TYPES)
             ->where('related_type', Message::class)
             ->findOrFail($announcementId);
 
@@ -145,7 +148,7 @@ class Index extends Component
 
         $properties = Property::accessibleBy($user)->orderBy('name')->get();
 
-        $history = AppNotification::where('event_type', 'landlord_message')
+        $history = AppNotification::whereIn('event_type', self::DISPLAYED_EVENT_TYPES)
             ->where('notifiable_type', (new Tenant)->getMorphClass())
             ->whereIn('notifiable_id', Tenant::accessibleBy($user)->pluck('id'))
             ->with('notifiable', 'related.replies.user')
