@@ -866,4 +866,91 @@ class LandlordTenancyModuleTest extends TestCase
 
         $this->assertDatabaseHas('tenants', ['id' => $tenant->id]);
     }
+
+    // --- F2: a moved-out tenant's financial/contractual history is protected too -------
+
+    public function test_a_moved_out_tenant_with_historical_rent_payment_deposit_and_contract_records_cannot_be_deleted(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['status' => 'terminated'])->save();
+        $tenant = $tenancy->tenant;
+
+        $charge = RentCharge::create([
+            'tenancy_id' => $tenancy->id,
+            'period_year' => now()->year, 'period_month' => now()->month,
+            'due_date' => now(), 'amount_expected' => 5000, 'amount_paid' => 5000, 'status' => 'paid',
+        ]);
+        $payment = Payment::create([
+            'tenancy_id' => $tenancy->id, 'rent_charge_id' => $charge->id,
+            'amount' => 5000, 'payment_date' => now()->format('Y-m-d'), 'method' => 'cash',
+            'reference_number' => 'F2-HISTORY-PAYMENT', 'recorded_by' => $landlord->id, 'status' => 'confirmed',
+        ]);
+        $depositPayment = \App\Models\DepositPayment::create([
+            'tenancy_id' => $tenancy->id, 'amount' => 6000, 'payment_date' => now()->format('Y-m-d'),
+            'method' => 'cash', 'status' => 'confirmed', 'confirmed_by' => $landlord->id, 'confirmed_at' => now(),
+        ]);
+        $contract = \App\Models\Contract::create([
+            'tenancy_id' => $tenancy->id, 'source' => 'system_template', 'status' => 'signed',
+            'body_snapshot' => 'Agreement text', 'version' => 1, 'sent_at' => now(), 'signed_at' => now(),
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(TenantsIndex::class)
+            ->call('delete', $tenant->id);
+
+        $this->assertDatabaseHas('tenants', ['id' => $tenant->id]);
+        $this->assertDatabaseHas('tenancies', ['id' => $tenancy->id]);
+        $this->assertDatabaseHas('rent_charges', ['id' => $charge->id]);
+        $this->assertDatabaseHas('payments', ['id' => $payment->id]);
+        $this->assertDatabaseHas('deposit_payments', ['id' => $depositPayment->id]);
+        $this->assertDatabaseHas('contracts', ['id' => $contract->id]);
+    }
+
+    /**
+     * F2 only adds a tenancies()->exists() guard inside Tenants\Index's own
+     * delete() action — it introduces no new restriction on the Tenant
+     * model itself, so a tenant with zero tenancies remains exactly as
+     * deletable at the model layer as before this fix.
+     *
+     * Note, traced but deliberately left alone as out of F2's scope: that
+     * same zero-tenancy tenant is already unreachable through the actual
+     * landlord-facing Tenants\Index UI today, for a reason that predates
+     * this fix and has nothing to do with history protection —
+     * TenantPolicy::delete() requires Tenant::accessibleBy($user), which
+     * itself requires whereHas('tenancies', ...), so it never matches a
+     * tenant with no tenancy at all. Changing that accessibility scope is
+     * not a retention/data-integrity concern and is left untouched here.
+     */
+    public function test_a_tenant_who_has_never_had_a_tenancy_remains_deletable_at_the_model_level(): void
+    {
+        $this->seed();
+
+        $tenant = Tenant::create(['name' => 'Never Housed Tenant', 'phone' => '0700555666', 'payment_due_day' => 1]);
+        $this->assertTrue($tenant->tenancies()->doesntExist());
+
+        $tenant->delete();
+
+        $this->assertDatabaseMissing('tenants', ['id' => $tenant->id]);
+    }
+
+    public function test_deleting_a_tenants_portal_login_preserves_their_business_record_and_history(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenant = $tenancy->tenant;
+
+        $portalUser = User::factory()->create();
+        $portalUser->assignRole('tenant');
+        $tenant->update(['user_id' => $portalUser->id]);
+
+        $portalUser->delete();
+
+        $this->assertDatabaseHas('tenants', ['id' => $tenant->id, 'user_id' => null]);
+        $this->assertDatabaseHas('tenancies', ['id' => $tenancy->id]);
+    }
 }

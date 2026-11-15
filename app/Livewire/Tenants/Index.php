@@ -45,36 +45,40 @@ class Index extends Component
     }
 
     /**
-     * KNOWN FINANCIAL AUDIT-RETENTION LIMITATION (flagged during the Phase 4
-     * audit, Finding 4 — deliberately left unchanged in that phase, pending
-     * a separate decision; see that phase's final report for the full
-     * reasoning):
+     * F2 (account lifecycle audit, fixing the limitation previously flagged
+     * here under Phase 4 Finding 4): used to only block deletion while an
+     * OCCUPYING tenancy existed. A tenant whose tenancy had already ended
+     * could still hard-delete here, destroying a real financial/
+     * contractual trail — rent charges, payments, deposit payments/
+     * refunds/deductions, contracts, M-Pesa transactions and their
+     * investigation history — every one of them cascadeOnDelete() against
+     * tenancies.id, which itself cascades from tenants.id. (The removed
+     * version of this comment claimed Payments/DepositPayments were merely
+     * orphaned rather than deleted; tracing the actual migrations —
+     * 2026_08_09_162621_create_payments_table.php and
+     * 2026_08_09_162622_create_deposit_payments_table.php — shows both are
+     * cascadeOnDelete() on tenancy_id, so that was incorrect: they are
+     * destroyed along with the tenancy, not left behind.)
      *
-     * This only blocks deletion while an OCCUPYING tenancy exists. A tenant
-     * whose tenancy has ended still hard-deletes here, and the existing FK
-     * chain (tenants -> tenancies -> mpesa_transactions -> mpesa_status_queries,
-     * each cascadeOnDelete()) means every M-Pesa transaction and its entire
-     * query-history/investigation audit trail for that tenant is destroyed
-     * along with it — including any already resolved 'success' transaction
-     * tied to a real, settled payment. Payments/DepositPayments themselves
-     * are NOT FK-cascaded (their tenancy_id references are left orphaned,
-     * not deleted), but their mpesa_transaction_id back-reference and the
-     * MpesaTransaction row it pointed to are gone, and nothing here asks
-     * whether this tenant has any payment/financial history before allowing
-     * the delete.
+     * Now blocks deletion whenever the tenant has ANY tenancy at all, not
+     * just an occupying one — any tenancy may have exactly that trail hung
+     * off it. A tenant who has never had a tenancy has nothing of that kind
+     * to lose, so deletion stays available for that genuinely unused case,
+     * unchanged from today's behaviour.
      *
-     * This is a pre-existing characteristic of this feature, not something
-     * Finding 4 introduced — mpesa_transactions.tenancy_id already cascaded
-     * before this phase. Changing it (e.g. a restrictOnDelete() FK, or
-     * checking financial history here) would alter this existing,
-     * already-shipped delete workflow's behaviour for landlords/managers
-     * using it today, so it is deliberately left alone pending an explicit,
-     * separate decision — recommended options: (a) block deletion outright
-     * for a tenant with any Payment/DepositPayment/MpesaTransaction history,
-     * mirroring the OCCUPYING_STATUSES check above, or (b) replace the hard
-     * delete with a soft-delete/anonymisation that retains the financial
-     * rows while scrubbing personal data, which also sidesteps the FK
-     * cascade entirely.
+     * This guard lives here, not as a database-level restrictOnDelete() on
+     * tenancies.tenant_id, deliberately: Tenant::booted()'s own deleting
+     * hook already performs a deliberate, cascade-aware cleanup (physical
+     * documents, dangling AppNotification rows) whenever a Tenant is
+     * actually deleted by any code path, and
+     * OrphanedNotificationCleanupTest::test_deleting_a_tenant_cleans_up_notifications_that_would_otherwise_dangle()
+     * already exercises $tenant->delete() directly on a tenant WITH a real
+     * tenancy and expects it to succeed. This Livewire action is the one
+     * user-facing, policy-governed entry point the audit actually found
+     * reachable — restricting the FK itself would also block that existing,
+     * intentional model-level test and any other legitimate direct-delete
+     * path, for no real additional protection since no other application
+     * code deletes a Tenant today.
      */
     public function delete(Tenant $tenant): void
     {
@@ -82,6 +86,12 @@ class Index extends Component
 
         if ($tenant->tenancies()->whereIn('status', Tenancy::OCCUPYING_STATUSES)->exists()) {
             session()->flash('status', 'This tenant has an active tenancy — end the tenancy before deleting their record.');
+
+            return;
+        }
+
+        if ($tenant->tenancies()->exists()) {
+            session()->flash('status', 'This tenant has historical tenancy, payment, deposit or contract records that must be retained — their record cannot be permanently deleted.');
 
             return;
         }
