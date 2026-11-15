@@ -602,6 +602,26 @@ class Show extends Component
         abort_unless(Auth::user()->hasRole('landlord') || Auth::user()->hasManagerPermission('tenancies.manage_contracts'), 403);
     }
 
+    /**
+     * Deposit refunds, deductions, void/dispute-resolution and deposit-
+     * payment confirm/dispute are deliberately landlord-only — the same
+     * boundary Deposits\Index, Finance\Overview, Reports\Index and
+     * Analytics\Performance already enforce via their own
+     * abort_unless(hasRole('landlord')). TenancyPolicy::update() alone
+     * isn't strict enough for these specific actions: it also grants a
+     * manager holding tenancies.terminate (an ordinary tenancy-management
+     * permission with no finance connotation, used for every other action
+     * in this component) access here too, and PermissionSeeder's own
+     * comment is explicit that finance.view_rent_status is deliberately
+     * the only finance permission ever offered to a manager — deposit
+     * money was never meant to be delegable.
+     */
+    private function authorizeDepositFinance(): void
+    {
+        $this->authorize('update', $this->tenancy);
+        abort_unless(Auth::user()->hasRole('landlord'), 403);
+    }
+
     public function generateContract(): void
     {
         $this->authorizeContractManagement();
@@ -828,7 +848,7 @@ class Show extends Component
 
     public function recordDeduction(): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $this->validate([
             'deduction_amount' => ['required', 'numeric', 'min:0.01'],
@@ -869,7 +889,7 @@ class Show extends Component
 
     public function voidDeduction(): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $this->validate([
             'void_reason' => ['required', 'string', 'max:1000'],
@@ -889,7 +909,7 @@ class Show extends Component
 
     public function resolveDispute(int $deductionId, string $resolution): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $deduction = DepositDeduction::where('tenancy_id', $this->tenancy->id)->findOrFail($deductionId);
 
@@ -988,7 +1008,7 @@ class Show extends Component
     /** The landlord acknowledges a tenant's offline deposit-payment claim actually arrived. Mirrors confirmPayment() above exactly, for the deposit ledger instead of rent. */
     public function confirmDepositPayment(int $depositPaymentId): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $payment = DepositPayment::where('tenancy_id', $this->tenancy->id)->findOrFail($depositPaymentId);
 
@@ -1018,7 +1038,7 @@ class Show extends Component
     /** Mirrors disputePayment() above exactly, for the deposit ledger instead of rent. */
     public function disputeDepositPayment(int $depositPaymentId, string $reason): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $reason = trim($reason);
 
@@ -1054,7 +1074,7 @@ class Show extends Component
 
     public function recordRefund(): void
     {
-        $this->authorize('update', $this->tenancy);
+        $this->authorizeDepositFinance();
 
         $this->validate([
             'refund_amount' => ['required', 'numeric', 'min:0.01'],

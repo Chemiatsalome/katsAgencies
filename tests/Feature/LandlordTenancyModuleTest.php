@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Livewire\Applications\Form as ApplicationForm;
 use App\Livewire\Applications\Show as ApplicationShow;
+use App\Livewire\Deposits\RecordDeposit;
 use App\Livewire\Tenancies\Form as TenancyForm;
 use App\Livewire\Tenancies\Show as TenancyShow;
 use App\Livewire\Tenants\Form as TenantsForm;
@@ -370,6 +371,150 @@ class LandlordTenancyModuleTest extends TestCase
             'amount' => 10000,
         ]);
         $this->assertEquals(12000, $tenancy->depositRefundedTotal() + $tenancy->depositDeductedTotal());
+    }
+
+    /**
+     * Landlord-side regression coverage for the stale-bedrooms sibling fix
+     * (Manager/Agent/Deposit follow-up audit): Tenancies\Show::recordRefund/
+     * recordDeduction/voidDeduction/resolveDispute/confirmDepositPayment/
+     * disputeDepositPayment now additionally require hasRole('landlord')
+     * via authorizeDepositFinance() — these pin that a landlord's own
+     * access to every one of those six actions is completely unaffected.
+     */
+    public function test_landlord_can_still_record_a_full_deposit_refund(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['deposit_required' => 8000, 'deposit_paid' => 8000])->save();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->set('refund_amount', 8000)
+            ->set('refund_date', now()->format('Y-m-d'))
+            ->call('recordRefund')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('deposit_refunds', ['tenancy_id' => $tenancy->id, 'amount' => 8000]);
+        $this->assertEquals(0, $tenancy->depositHeldBalance());
+    }
+
+    public function test_landlord_can_still_record_a_deposit_deduction_via_the_tenancy_show_form(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['deposit_required' => 9000, 'deposit_paid' => 9000])->save();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->set('deduction_amount', 1500)
+            ->set('deduction_reason', 'Broken window')
+            ->set('deduction_date', now()->format('Y-m-d'))
+            ->call('recordDeduction')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('deposit_deductions', [
+            'tenancy_id' => $tenancy->id,
+            'amount' => 1500,
+            'reason' => 'Broken window',
+        ]);
+    }
+
+    public function test_landlord_can_still_void_a_deposit_deduction(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['deposit_required' => 9000, 'deposit_paid' => 9000])->save();
+
+        $deduction = app(\App\Services\DepositService::class)->recordDeduction($tenancy, 1500, 'Recorded in error', now()->format('Y-m-d'), $landlord->id);
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->set('voidingDeductionId', $deduction->id)
+            ->set('void_reason', 'Wrong tenant')
+            ->call('voidDeduction')
+            ->assertHasNoErrors();
+
+        $this->assertNotNull($deduction->fresh()->voided_at);
+    }
+
+    public function test_landlord_can_still_resolve_a_disputed_deposit_deduction(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['deposit_required' => 9000, 'deposit_paid' => 9000])->save();
+
+        $deduction = app(\App\Services\DepositService::class)->recordDeduction($tenancy, 1500, 'Cleaning', now()->format('Y-m-d'), $landlord->id);
+        $deduction->forceFill([
+            'disputed_at' => now(),
+            'dispute_reason' => 'Not fair',
+            'disputed_by' => $tenancy->tenant->user_id ?? $landlord->id,
+        ])->save();
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->call('resolveDispute', $deduction->id, 'uphold')
+            ->assertHasNoErrors();
+
+        $this->assertNotNull($deduction->fresh()->dispute_resolved_at);
+    }
+
+    public function test_landlord_can_still_confirm_and_dispute_deposit_payments(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+
+        $toConfirm = \App\Models\DepositPayment::create([
+            'tenancy_id' => $tenancy->id, 'amount' => 4000, 'payment_date' => now()->format('Y-m-d'),
+            'method' => 'mpesa', 'status' => 'awaiting_landlord_confirmation',
+        ]);
+        $toDispute = \App\Models\DepositPayment::create([
+            'tenancy_id' => $tenancy->id, 'amount' => 3000, 'payment_date' => now()->format('Y-m-d'),
+            'method' => 'mpesa', 'status' => 'awaiting_landlord_confirmation',
+        ]);
+
+        Livewire::actingAs($landlord)
+            ->test(TenancyShow::class, ['tenancy' => $tenancy])
+            ->call('confirmDepositPayment', $toConfirm->id)
+            ->assertHasNoErrors()
+            ->call('disputeDepositPayment', $toDispute->id, 'Amount does not match')
+            ->assertHasNoErrors();
+
+        $this->assertEquals('confirmed', $toConfirm->fresh()->status);
+        $this->assertEquals('disputed', $toDispute->fresh()->status);
+    }
+
+    /** Follow-up regression test: a landlord's own access to Deposits\RecordDeposit (recording an initial deposit payment) must be completely unaffected by its new landlord-only guard. */
+    public function test_landlord_can_still_record_an_initial_deposit_payment(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+
+        Livewire::actingAs($landlord)
+            ->test(RecordDeposit::class, ['tenancy' => $tenancy])
+            ->set('amount', 6000)
+            ->set('payment_date', now()->format('Y-m-d'))
+            ->set('method', 'mpesa')
+            ->set('reference_number', 'ABC123')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('deposit_payments', [
+            'tenancy_id' => $tenancy->id,
+            'amount' => 6000,
+            'reference_number' => 'ABC123',
+        ]);
     }
 
     public function test_moving_out_an_already_ended_tenancy_is_a_no_op(): void

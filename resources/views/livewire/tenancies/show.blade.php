@@ -571,7 +571,7 @@
             </summary>
 
             @can('update', $tenancy)
-                @if (in_array($tenancy->status, \App\Models\Tenancy::OCCUPYING_STATUSES))
+                @if (in_array($tenancy->status, \App\Models\Tenancy::OCCUPYING_STATUSES) && auth()->user()->hasRole('landlord'))
                     <div class="px-5 pb-5 border-b border-brand-border">
                         <livewire:deposits.record-deposit :tenancy="$tenancy" :key="'record-deposit-'.$tenancy->id" />
                     </div>
@@ -584,7 +584,7 @@
                         @if ($depositOutstanding > 0)
                             <button wire:click="requestOutstandingDeposit" class="text-xs text-teal hover:underline">Request Outstanding Deposit</button>
                         @endif
-                        @if ($depositHeld > 0)
+                        @if ($depositHeld > 0 && auth()->user()->hasRole('landlord'))
                             <button wire:click="$toggle('showDeductionForm')" class="text-xs text-teal hover:underline">Record Deduction</button>
                             <button wire:click="$toggle('showRefundForm')" class="text-xs text-teal hover:underline">Record Refund</button>
                         @endif
@@ -621,7 +621,7 @@
                 </p>
             @endif
 
-            @if ($showDeductionForm)
+            @if ($showDeductionForm && auth()->user()->hasRole('landlord'))
                 <form wire:submit="recordDeduction" class="p-5 border-b border-brand-border space-y-3">
                     <p class="text-xs text-brand-slate">
                         Currently held: KSh {{ number_format($depositHeld) }}.
@@ -658,7 +658,7 @@
                 </form>
             @endif
 
-            @if ($showRefundForm)
+            @if ($showRefundForm && auth()->user()->hasRole('landlord'))
                 <form wire:submit="recordRefund" class="p-5 border-b border-brand-border space-y-3">
                     <p class="text-xs text-brand-slate">
                         Currently held: KSh {{ number_format($depositHeld) }}.
@@ -715,6 +715,7 @@
                                 <div class="text-right shrink-0">
                                     <p class="{{ $deduction->isVoided() ? 'text-brand-slate line-through' : 'text-danger' }} font-medium">-KSh {{ number_format($deduction->amount) }}</p>
                                     @can('update', $tenancy)
+                                        @if (auth()->user()->hasRole('landlord'))
                                         @if ($deduction->isDisputePending())
                                             <div class="mt-1 flex items-center gap-2 justify-end">
                                                 <button wire:click="resolveDispute({{ $deduction->id }}, 'uphold')" class="text-xs text-teal hover:underline">Uphold</button>
@@ -730,6 +731,7 @@
                                             @else
                                                 <button wire:click="startVoidDeduction({{ $deduction->id }})" class="text-xs text-brand-slate hover:underline">Void</button>
                                             @endif
+                                        @endif
                                         @endif
                                     @endcan
                                 </div>
@@ -771,7 +773,7 @@
                                 </td>
                                 @can('update', $tenancy)
                                     <td class="px-5 py-2 text-right whitespace-nowrap">
-                                        @if ($deposit->needsLandlordConfirmation())
+                                        @if ($deposit->needsLandlordConfirmation() && auth()->user()->hasRole('landlord'))
                                             <button wire:click="confirmDepositPayment({{ $deposit->id }})" wire:confirm="Confirm this KSh {{ number_format($deposit->amount, 2) }} deposit payment? It will be added to the tenant's held deposit." class="text-success hover:underline text-xs font-medium">Confirm</button>
                                             <button
                                                 x-data
