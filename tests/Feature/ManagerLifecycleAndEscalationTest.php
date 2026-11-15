@@ -88,7 +88,7 @@ class ManagerLifecycleAndEscalationTest extends TestCase
         $manager->update(['status' => 'inactive']);
         $managerUser->update(['status' => 'inactive']);
 
-        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('remove', $manager);
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('remove', $manager, 'No longer needed.');
 
         $this->assertDatabaseMissing('managers', ['id' => $manager->id]);
         $this->assertDatabaseHas('users', ['id' => $managerUser->id, 'status' => 'inactive']);
@@ -120,7 +120,7 @@ class ManagerLifecycleAndEscalationTest extends TestCase
         $landlord = User::role('landlord')->firstOrFail();
         $managerUser = $this->makeManager($landlord);
 
-        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('deactivate', $managerUser->manager);
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('deactivate', $managerUser->manager, 'Testing deactivation.');
 
         $this->assertTrue(
             AppNotification::where('notifiable_type', $managerUser->getMorphClass())
@@ -136,7 +136,7 @@ class ManagerLifecycleAndEscalationTest extends TestCase
         $landlord = User::role('landlord')->firstOrFail();
         $managerUser = $this->makeManager($landlord);
 
-        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('deactivate', $managerUser->manager);
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)->call('deactivate', $managerUser->manager, 'Testing deactivation.');
         $managerUser->update(['status' => 'active']); // re-activate just to log back in and check their own bell
 
         $count = AppNotification::forLandlordContext($managerUser->fresh())->whereNull('read_at')->count();
@@ -151,7 +151,7 @@ class ManagerLifecycleAndEscalationTest extends TestCase
 
         Livewire::actingAs($admin)
             ->test(\App\Livewire\Admin\Landlords\Index::class)
-            ->call('updateStatus', $landlord->id, 'suspended');
+            ->call('updateStatus', $landlord->id, 'suspended', 'Testing landlord suspension.');
 
         $this->assertTrue(
             AppNotification::where('notifiable_type', $landlord->getMorphClass())
@@ -313,6 +313,137 @@ class ManagerLifecycleAndEscalationTest extends TestCase
         $countAfter = AppNotification::where('event_type', 'like', 'disbursement_overdue_%')->count();
 
         $this->assertEquals($countBefore, $countAfter, 'A second run in the same cycle must not send a duplicate.');
+    }
+
+    // --- Phase 3: reason capture for manager deactivation/removal ----------------------
+
+    public function test_a_landlord_cannot_deactivate_a_manager_without_a_reason(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $managerUser = $this->makeManager($landlord);
+
+        Livewire::actingAs($landlord)
+            ->test(ManagersIndex::class)
+            ->call('deactivate', $managerUser->manager, '')
+            ->assertHasErrors('deactivateReason');
+
+        $this->assertEquals('active', $managerUser->manager->fresh()->status);
+    }
+
+    public function test_a_valid_manager_deactivation_records_the_reason_actor_and_target(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $managerUser = $this->makeManager($landlord);
+        $manager = $managerUser->manager;
+
+        Livewire::actingAs($landlord)
+            ->test(ManagersIndex::class)
+            ->call('deactivate', $manager, 'Repeated unauthorized rent discounts.')
+            ->assertHasNoErrors('deactivateReason');
+
+        $this->assertEquals('inactive', $manager->fresh()->status);
+
+        $activity = \Spatie\Activitylog\Models\Activity::where('subject_type', Manager::class)
+            ->where('subject_id', $manager->id)->where('event', 'updated')->latest('id')->first();
+
+        $this->assertNotNull($activity);
+        $this->assertEquals('Repeated unauthorized rent discounts.', $activity->properties['reason'] ?? null);
+        $this->assertEquals($landlord->id, $activity->causer_id);
+        $this->assertEquals($landlord->getMorphClass(), $activity->causer_type);
+    }
+
+    public function test_a_landlord_cannot_remove_a_manager_without_a_reason(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $managerUser = $this->makeManager($landlord);
+        $manager = $managerUser->manager;
+        $manager->update(['status' => 'inactive']);
+        $managerUser->update(['status' => 'inactive']);
+
+        Livewire::actingAs($landlord)
+            ->test(ManagersIndex::class)
+            ->call('remove', $manager, '')
+            ->assertHasErrors('removeReason');
+
+        $this->assertDatabaseHas('managers', ['id' => $manager->id]);
+    }
+
+    public function test_a_valid_manager_removal_records_the_reason_actor_and_target(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $managerUser = $this->makeManager($landlord);
+        $manager = $managerUser->manager;
+        $manager->update(['status' => 'inactive']);
+        $managerUser->update(['status' => 'inactive']);
+        $managerId = $manager->id;
+
+        Livewire::actingAs($landlord)
+            ->test(ManagersIndex::class)
+            ->call('remove', $manager, 'Contract with this manager ended.')
+            ->assertHasNoErrors('removeReason');
+
+        $this->assertDatabaseMissing('managers', ['id' => $managerId]);
+
+        $activity = \Spatie\Activitylog\Models\Activity::where('subject_type', Manager::class)
+            ->where('subject_id', $managerId)->where('event', 'deleted')->latest('id')->first();
+
+        $this->assertNotNull($activity);
+        $this->assertEquals('Contract with this manager ended.', $activity->properties['reason'] ?? null);
+        $this->assertEquals($landlord->id, $activity->causer_id);
+    }
+
+    public function test_manager_authorization_boundaries_remain_enforced_for_deactivate_and_remove(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $otherLandlord = User::factory()->create();
+        $otherLandlord->assignRole('landlord');
+        $managerUser = $this->makeManager($landlord);
+        $manager = $managerUser->manager;
+
+        Livewire::actingAs($otherLandlord)
+            ->test(ManagersIndex::class)
+            ->call('deactivate', $manager, 'Not my manager.')
+            ->assertForbidden();
+
+        $this->assertEquals('active', $manager->fresh()->status);
+    }
+
+    /**
+     * Confirms a second deactivation cycle's reason doesn't overwrite the
+     * first one's activity_log row — each status transition is its own
+     * log entry, so a manager's deactivation history accumulates rather
+     * than being replaced.
+     */
+    public function test_a_subsequent_deactivation_reason_does_not_overwrite_the_previous_ones_log_entry(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $managerUser = $this->makeManager($landlord);
+        $manager = $managerUser->manager;
+
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)
+            ->call('deactivate', $manager, 'First deactivation reason.');
+
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)
+            ->call('reactivate', $manager->fresh());
+
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)
+            ->call('deactivate', $manager->fresh(), 'Second deactivation reason.');
+
+        $reasons = \Spatie\Activitylog\Models\Activity::where('subject_type', Manager::class)
+            ->where('subject_id', $manager->id)
+            ->whereNotNull('properties->reason')
+            ->orderBy('id')
+            ->pluck('properties')
+            ->map(fn ($p) => $p['reason'] ?? null)
+            ->values();
+
+        $this->assertEquals(['First deactivation reason.', 'Second deactivation reason.'], $reasons->all());
     }
 
     private function createTenancyFallback(User $landlord, \App\Models\House $house): \App\Models\Tenancy

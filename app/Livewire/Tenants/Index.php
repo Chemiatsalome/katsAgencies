@@ -116,6 +116,11 @@ class Index extends Component
         $displayScope = fn ($q) => $this->status !== 'all' ? $q->where('status', $this->status) : $q->active();
 
         $query = Tenant::with(['tenancies' => fn ($q) => $displayScope($q)->with('house.block.property')->latest('move_in_date')])
+            // Backs the Delete-button visibility rule below — the same
+            // tenancies()->exists() condition delete() itself enforces,
+            // computed as one subquery for the whole page rather than a
+            // query per row.
+            ->withExists('tenancies')
             ->when($this->search, fn ($q) => $q->where(fn ($q2) => $q2
                 ->where('name', 'like', "%{$this->search}%")
                 ->orWhere('phone', 'like', "%{$this->search}%")))

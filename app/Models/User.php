@@ -169,4 +169,22 @@ class User extends Authenticatable implements MustVerifyEmail
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
     }
+
+    /**
+     * Phase 3 (account lifecycle audit): a transient, never-persisted
+     * property an admin-driven status change sets just before save() —
+     * tapActivity() below folds it into the same activity_log row the
+     * status change is already auto-logging via getActivitylogOptions(),
+     * so the reason, actor, target and timestamp live together in one
+     * place rather than a second audit mechanism. Left null for every
+     * other save, so it can never leak onto an unrelated change.
+     */
+    public ?string $pendingStatusChangeReason = null;
+
+    public function tapActivity(\Spatie\Activitylog\Models\Activity $activity, string $eventName): void
+    {
+        if ($this->pendingStatusChangeReason !== null) {
+            $activity->properties = $activity->properties->merge(['reason' => $this->pendingStatusChangeReason]);
+        }
+    }
 }

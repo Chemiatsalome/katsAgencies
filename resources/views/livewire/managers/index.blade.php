@@ -18,6 +18,30 @@
                     <div class="bg-green-50 border border-green-200 text-green-800 text-sm rounded-md px-4 py-2">{{ session('status') }}</div>
                 @endif
 
+                @if ($pendingDeactivateManagerId)
+                    <form wire:submit="confirmDeactivate" class="bg-white shadow-sm border border-brand-border rounded-md p-4 space-y-2 max-w-xl">
+                        <p class="text-sm text-charcoal">Reason for deactivating this manager:</p>
+                        <textarea wire:model="deactivateReason" rows="2" class="w-full rounded-md border-brand-border text-sm" placeholder="Why is this manager's access being deactivated?"></textarea>
+                        <x-input-error :messages="$errors->get('deactivateReason')" class="mt-1" />
+                        <div class="flex gap-3">
+                            <button type="submit" class="text-xs font-medium text-danger hover:underline">Confirm Deactivation</button>
+                            <button type="button" wire:click="cancelDeactivate" class="text-xs font-medium text-brand-slate hover:underline">Cancel</button>
+                        </div>
+                    </form>
+                @endif
+
+                @if ($pendingRemoveManagerId)
+                    <form wire:submit="confirmRemove" class="bg-white shadow-sm border border-brand-border rounded-md p-4 space-y-2 max-w-xl">
+                        <p class="text-sm text-charcoal">Reason for permanently removing this manager:</p>
+                        <textarea wire:model="removeReason" rows="2" class="w-full rounded-md border-brand-border text-sm" placeholder="Why is this manager being removed?"></textarea>
+                        <x-input-error :messages="$errors->get('removeReason')" class="mt-1" />
+                        <div class="flex gap-3">
+                            <button type="submit" class="text-xs font-medium text-danger hover:underline">Confirm Removal</button>
+                            <button type="button" wire:click="cancelRemove" class="text-xs font-medium text-brand-slate hover:underline">Cancel</button>
+                        </div>
+                    </form>
+                @endif
+
                 <div class="bg-white shadow-sm rounded-lg border border-brand-border overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="min-w-full text-sm">
@@ -75,10 +99,10 @@
                                                 <a href="{{ route('manage.managers.activity', $manager) }}" wire:navigate class="text-brand-slate hover:underline text-xs font-medium">Activity</a>
                                             @endif
                                             @if ($manager->status === 'active')
-                                                <button wire:click="deactivate({{ $manager->id }})" wire:confirm="Deactivate this manager? They will be logged out immediately." class="text-danger hover:underline text-xs font-medium">Deactivate</button>
+                                                <button wire:click="startDeactivate({{ $manager->id }})" class="text-danger hover:underline text-xs font-medium">Deactivate</button>
                                             @elseif ($manager->status === 'inactive')
                                                 <button wire:click="reactivate({{ $manager->id }})" class="text-teal hover:underline text-xs font-medium">Reactivate</button>
-                                                <button wire:click="remove({{ $manager->id }})" wire:confirm="Permanently remove this manager and their login? This cannot be undone." class="text-danger hover:underline text-xs font-medium">Remove</button>
+                                                <button wire:click="startRemove({{ $manager->id }})" class="text-danger hover:underline text-xs font-medium">Remove</button>
                                             @endif
                                         </td>
                                     </tr>

@@ -70,7 +70,7 @@ class AdminSettingsTest extends TestCase
 
         Livewire::actingAs($admin)
             ->test(UsersIndex::class)
-            ->call('updateStatus', $landlord->id, 'suspended');
+            ->call('updateStatus', $landlord->id, 'suspended', 'Testing admin suspension.');
 
         $this->assertEquals('suspended', $landlord->fresh()->status);
     }

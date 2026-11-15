@@ -94,4 +94,19 @@ class Manager extends Model
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
     }
+
+    /**
+     * Phase 3 (account lifecycle audit): see User::$pendingStatusChangeReason
+     * for the identical reasoning — a landlord-driven deactivate()/remove()
+     * sets this just before save()/delete(), and tapActivity() folds it
+     * into the same activity_log row the action is already auto-logging.
+     */
+    public ?string $pendingActionReason = null;
+
+    public function tapActivity(\Spatie\Activitylog\Models\Activity $activity, string $eventName): void
+    {
+        if ($this->pendingActionReason !== null) {
+            $activity->properties = $activity->properties->merge(['reason' => $this->pendingActionReason]);
+        }
+    }
 }

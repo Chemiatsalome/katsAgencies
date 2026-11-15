@@ -108,7 +108,11 @@
                                         <td class="px-5 py-3 text-right space-x-3">
                                             <a href="{{ route('manage.tenants.edit', $tenant) }}" wire:navigate class="text-brand-slate hover:text-charcoal">Edit</a>
                                             @can('delete', $tenant)
-                                                <button wire:click="delete({{ $tenant->id }})" wire:confirm="Delete this tenant and all their tenancy/payment history? This can't be undone." class="text-danger hover:text-danger/80">Delete</button>
+                                                @if ($tenant->tenancies_exists)
+                                                    <span class="text-gray-400 text-xs">This tenant has tenancy or financial history and cannot be deleted.</span>
+                                                @else
+                                                    <button wire:click="delete({{ $tenant->id }})" wire:confirm="Delete this tenant record? This can't be undone." class="text-danger hover:text-danger/80">Delete</button>
+                                                @endif
                                             @endcan
                                         </td>
                                     </tr>

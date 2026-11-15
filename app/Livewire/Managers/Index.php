@@ -12,9 +12,61 @@ use Livewire\Component;
 #[Layout('layouts.admin')]
 class Index extends Component
 {
+    // --- Phase 3: reason capture for deactivating/removing a manager -------------------
+
+    public ?int $pendingDeactivateManagerId = null;
+
+    public string $deactivateReason = '';
+
+    public ?int $pendingRemoveManagerId = null;
+
+    public string $removeReason = '';
+
     public function mount(): void
     {
         $this->authorize('viewAny', Manager::class);
+    }
+
+    public function startDeactivate(int $managerId): void
+    {
+        $this->pendingDeactivateManagerId = $managerId;
+        $this->deactivateReason = '';
+        $this->resetErrorBag('deactivateReason');
+    }
+
+    public function cancelDeactivate(): void
+    {
+        $this->reset(['pendingDeactivateManagerId', 'deactivateReason']);
+    }
+
+    public function confirmDeactivate(): void
+    {
+        $this->validate(['deactivateReason' => ['required', 'string', 'min:3', 'max:500']]);
+
+        $this->deactivate(Manager::findOrFail($this->pendingDeactivateManagerId), $this->deactivateReason);
+
+        $this->reset(['pendingDeactivateManagerId', 'deactivateReason']);
+    }
+
+    public function startRemove(int $managerId): void
+    {
+        $this->pendingRemoveManagerId = $managerId;
+        $this->removeReason = '';
+        $this->resetErrorBag('removeReason');
+    }
+
+    public function cancelRemove(): void
+    {
+        $this->reset(['pendingRemoveManagerId', 'removeReason']);
+    }
+
+    public function confirmRemove(): void
+    {
+        $this->validate(['removeReason' => ['required', 'string', 'min:3', 'max:500']]);
+
+        $this->remove(Manager::findOrFail($this->pendingRemoveManagerId), $this->removeReason);
+
+        $this->reset(['pendingRemoveManagerId', 'removeReason']);
     }
 
     public function cancelInvitation(Manager $manager): void
@@ -46,7 +98,7 @@ class Index extends Component
         session()->flash('status', 'Invitation regenerated. The previous link no longer works.');
     }
 
-    public function deactivate(Manager $manager): void
+    public function deactivate(Manager $manager, string $reason = ''): void
     {
         $this->authorize('update', $manager);
 
@@ -54,6 +106,17 @@ class Index extends Component
             return;
         }
 
+        // Enforced here too, not only by confirmDeactivate()'s own
+        // validate() — deactivate() is itself a directly callable Livewire
+        // action, so the reason requirement has to hold regardless of
+        // which path reaches it.
+        if (trim($reason) === '') {
+            $this->addError('deactivateReason', 'A reason is required to deactivate a manager.');
+
+            return;
+        }
+
+        $manager->pendingActionReason = trim($reason);
         $manager->update(['status' => 'inactive']);
         $manager->user?->update(['status' => 'inactive']);
 
@@ -100,11 +163,17 @@ class Index extends Component
 
     // Only offered once a manager is already deactivated — a deliberate
     // two-step action rather than a one-click delete from an active state.
-    public function remove(Manager $manager): void
+    public function remove(Manager $manager, string $reason = ''): void
     {
         $this->authorize('delete', $manager);
 
         if ($manager->status !== 'inactive') {
+            return;
+        }
+
+        if (trim($reason) === '') {
+            $this->addError('removeReason', 'A reason is required to remove a manager.');
+
             return;
         }
 
@@ -116,6 +185,7 @@ class Index extends Component
         // The account is already permanently inactive and unable to log
         // in (same enforcement as deactivate()) — only the delegation
         // record itself goes.
+        $manager->pendingActionReason = trim($reason);
         $manager->delete();
 
         session()->flash('status', 'Manager removed.');

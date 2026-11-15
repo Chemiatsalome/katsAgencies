@@ -9,6 +9,22 @@
         </x-slot>
 
         <div class="p-6 space-y-4">
+            @if (session('status'))
+                <div class="rounded-md bg-teal/10 border border-teal/30 text-teal px-4 py-2 text-sm">{{ session('status') }}</div>
+            @endif
+
+            @if ($pendingStatusUserId)
+                <form wire:submit="confirmStatusChange" class="bg-white shadow-sm border border-brand-border rounded-md p-4 space-y-2 max-w-xl">
+                    <p class="text-sm text-charcoal">Reason for suspending this landlord:</p>
+                    <textarea wire:model="reason" rows="2" class="w-full rounded-md border-brand-border text-sm" placeholder="Why is this landlord's account being suspended?"></textarea>
+                    <x-input-error :messages="$errors->get('reason')" class="mt-1" />
+                    <div class="flex gap-3">
+                        <button type="submit" class="text-xs font-medium text-danger hover:underline">Confirm Suspension</button>
+                        <button type="button" wire:click="cancelStatusChange" class="text-xs font-medium text-brand-slate hover:underline">Cancel</button>
+                    </div>
+                </form>
+            @endif
+
             <div class="flex flex-wrap items-center gap-3">
                 <input type="text" wire:model.live.debounce.400ms="search" placeholder="Search by name or email…" class="rounded-md border-brand-border text-sm" />
                 <select wire:model.live="status" class="rounded-md border-brand-border text-sm">
@@ -50,7 +66,7 @@
                                     </td>
                                     <td class="px-5 py-3 text-right space-x-2">
                                         @if ($row->user->status === 'active')
-                                            <button wire:click="updateStatus({{ $row->user->id }}, 'suspended')" wire:confirm="Suspend this landlord?" class="text-danger hover:underline text-xs">Suspend</button>
+                                            <button wire:click="startStatusChange({{ $row->user->id }}, 'suspended')" class="text-danger hover:underline text-xs">Suspend</button>
                                         @elseif ($row->user->isPendingApproval())
                                             {{-- Deliberately not a one-click Approve here — pending
                                                  applicants only ever get decided on the Applications

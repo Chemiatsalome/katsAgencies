@@ -953,4 +953,47 @@ class LandlordTenancyModuleTest extends TestCase
         $this->assertDatabaseHas('tenants', ['id' => $tenant->id, 'user_id' => null]);
         $this->assertDatabaseHas('tenancies', ['id' => $tenancy->id]);
     }
+
+    // --- Tenant management: Delete-button visibility mirrors the F2 backend guard -----
+
+    public function test_a_tenant_with_an_active_tenancy_has_no_delete_action_in_the_rendered_list(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+
+        $component = Livewire::actingAs($landlord)->test(TenantsIndex::class);
+
+        $component->assertDontSee('wire:click="delete('.$tenancy->tenant_id.')"', false);
+        $component->assertSee('This tenant has tenancy or financial history and cannot be deleted.');
+        $component->assertSee('Edit');
+    }
+
+    public function test_a_moved_out_tenant_with_historical_records_has_no_delete_action_but_other_actions_remain(): void
+    {
+        $this->seed();
+
+        $landlord = User::role('landlord')->firstOrFail();
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenancy->forceFill(['status' => 'terminated'])->save();
+        $tenant = $tenancy->tenant;
+
+        Payment::create([
+            'tenancy_id' => $tenancy->id, 'amount' => 4000, 'payment_date' => now()->format('Y-m-d'),
+            'method' => 'cash', 'reference_number' => 'UI-VISIBILITY-TEST', 'recorded_by' => $landlord->id, 'status' => 'confirmed',
+        ]);
+
+        $component = Livewire::actingAs($landlord)
+            ->test(TenantsIndex::class)
+            ->set('status', 'terminated');
+
+        $component->assertDontSee('wire:click="delete('.$tenant->id.')"', false);
+        $component->assertSee('This tenant has tenancy or financial history and cannot be deleted.');
+        $component->assertSee(route('manage.tenants.edit', $tenant), false);
+
+        // The backend guard still blocks it even if the (hidden) action were invoked directly.
+        $component->call('delete', $tenant->id);
+        $this->assertDatabaseHas('tenants', ['id' => $tenant->id]);
+    }
 }

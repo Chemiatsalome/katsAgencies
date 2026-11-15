@@ -21,9 +21,54 @@ class Index extends Component
 
     public string $status = 'all';
 
-    public function updateStatus(int $userId, string $status): void
+    // --- Phase 3: reason capture for suspending a landlord -----------------------------
+
+    public ?int $pendingStatusUserId = null;
+
+    public ?string $pendingStatusValue = null;
+
+    public string $reason = '';
+
+    public function startStatusChange(int $userId, string $status): void
+    {
+        if ($status === 'active') {
+            $this->updateStatus($userId, $status);
+
+            return;
+        }
+
+        $this->pendingStatusUserId = $userId;
+        $this->pendingStatusValue = $status;
+        $this->reason = '';
+        $this->resetErrorBag('reason');
+    }
+
+    public function cancelStatusChange(): void
+    {
+        $this->reset(['pendingStatusUserId', 'pendingStatusValue', 'reason']);
+    }
+
+    public function confirmStatusChange(): void
+    {
+        $this->validate(['reason' => ['required', 'string', 'min:3', 'max:500']]);
+
+        $this->updateStatus((int) $this->pendingStatusUserId, (string) $this->pendingStatusValue, $this->reason);
+
+        $this->reset(['pendingStatusUserId', 'pendingStatusValue', 'reason']);
+    }
+
+    public function updateStatus(int $userId, string $status, string $reason = ''): void
     {
         abort_unless(in_array($status, ['active', 'inactive', 'suspended'], true), 422);
+
+        // Enforced here too, not only by confirmStatusChange()'s own
+        // validate() call — updateStatus() is itself a directly callable
+        // Livewire action.
+        if ($status !== 'active' && trim($reason) === '') {
+            $this->addError('reason', 'A reason is required to suspend a landlord.');
+
+            return;
+        }
 
         $user = User::role('landlord')->findOrFail($userId);
         $previousStatus = $user->status;
@@ -50,6 +95,10 @@ class Index extends Component
             }
 
             return;
+        }
+
+        if ($status !== 'active') {
+            $user->pendingStatusChangeReason = trim($reason);
         }
 
         $user->update([

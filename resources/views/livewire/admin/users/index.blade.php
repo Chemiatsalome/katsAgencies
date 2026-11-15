@@ -17,6 +17,20 @@
                 </div>
             @endif
 
+            @if ($pendingStatusUserId)
+                <form wire:submit="confirmStatusChange" class="bg-white shadow-sm border border-brand-border rounded-md p-4 space-y-2 max-w-xl">
+                    <p class="text-sm text-charcoal">
+                        Reason for changing this account's status to <strong>{{ ucfirst($pendingStatusValue) }}</strong>:
+                    </p>
+                    <textarea wire:model="reason" rows="2" class="w-full rounded-md border-brand-border text-sm" placeholder="Why is this account being deactivated or suspended?"></textarea>
+                    <x-input-error :messages="$errors->get('reason')" class="mt-1" />
+                    <div class="flex gap-3">
+                        <button type="submit" class="text-xs font-medium text-danger hover:underline">Confirm</button>
+                        <button type="button" wire:click="cancelStatusChange" class="text-xs font-medium text-brand-slate hover:underline">Cancel</button>
+                    </div>
+                </form>
+            @endif
+
             <div class="flex flex-wrap items-center gap-3">
                 <input type="text" wire:model.live.debounce.400ms="search" placeholder="Search by name or email…" class="rounded-md border-brand-border text-sm" />
                 <select wire:model.live="roleFilter" class="rounded-md border-brand-border text-sm">
@@ -52,11 +66,15 @@
                                         </select>
                                     </td>
                                     <td class="px-5 py-3">
-                                        <select wire:change="updateStatus({{ $user->id }}, $event.target.value)" wire:confirm="Change {{ $user->name }}'s status? This takes effect immediately." class="rounded-md border-brand-border text-xs py-1">
-                                            @foreach (['active', 'inactive', 'suspended'] as $status)
-                                                <option value="{{ $status }}" @selected($user->status === $status)>{{ ucfirst($status) }}</option>
-                                            @endforeach
-                                        </select>
+                                        @if ($user->hasRole('manager'))
+                                            <span class="text-xs text-brand-slate" title="Only this manager's landlord can deactivate or remove them.">{{ ucfirst($user->status) }} (landlord-controlled)</span>
+                                        @else
+                                            <select wire:change="startStatusChange({{ $user->id }}, $event.target.value)" wire:confirm="Change {{ $user->name }}'s status?" class="rounded-md border-brand-border text-xs py-1">
+                                                @foreach (['active', 'inactive', 'suspended'] as $status)
+                                                    <option value="{{ $status }}" @selected($user->status === $status)>{{ ucfirst($status) }}</option>
+                                                @endforeach
+                                            </select>
+                                        @endif
                                     </td>
                                     <td class="px-5 py-3 text-right">
                                         <button wire:click="resetPassword({{ $user->id }})" wire:confirm="Reset this user's password?" class="text-brand-slate hover:text-navy">Reset Password</button>
