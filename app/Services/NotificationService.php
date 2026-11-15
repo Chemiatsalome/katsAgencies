@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Mail\GenericNotificationMail;
 use App\Models\AppNotification;
+use App\Models\Manager;
+use App\Models\Property;
 use App\Models\Tenancy;
 use App\Models\Tenant;
 use App\Models\User;
@@ -51,6 +53,57 @@ class NotificationService
 
             $this->deliver($notification, $notifiable);
         }
+    }
+
+    /**
+     * The one call site an event meant for "whoever is responsible for
+     * this property" should go through, instead of each module hand-rolling
+     * its own "notify the landlord, and maybe a manager too" — closes the
+     * cross-role audit's F-1 finding (managers received zero proactive
+     * notifications) consistently, rather than module-by-module.
+     *
+     * Always notifies the landlord — exactly the recipient every existing
+     * call site already used — plus every manager genuinely eligible for
+     * $property (see Manager::scopeEligibleForProperty(): active, assigned
+     * either directly or via all_properties) and, when $managerPermission
+     * is given, holding that specific permission. Each eligible manager
+     * gets their own AppNotification row addressed directly to their own
+     * User record — never a shared or borrowed copy of the landlord's own
+     * notification (see AppNotification::scopeForLandlordContext(), which
+     * used to — unintentionally — surface literally every landlord-
+     * addressed notification, including deposits and payouts, to any
+     * manager of that landlord regardless of property or permission; that
+     * blanket substitution has been removed specifically so this explicit,
+     * scoped fan-out is the only way a manager's bell shows anything
+     * beyond what's addressed to their own tenants).
+     *
+     * Deliberately never used for deposit/finance/payout events — those
+     * keep calling notify($landlord, ...) directly, unchanged, since no
+     * delegable manager permission for them exists (see
+     * PermissionSeeder::managerPermissionGroups()'s own comment) and this
+     * method must never become a second way to reach what the dedicated
+     * financial modules already keep landlord-only.
+     */
+    public function notifyPropertyStakeholders(
+        Property $property,
+        string $eventType,
+        string $title,
+        string $body,
+        array $channels = ['in_app'],
+        ?Model $related = null,
+        ?string $managerPermission = null,
+    ): void {
+        if ($property->landlord) {
+            $this->notify($property->landlord, $eventType, $title, $body, $channels, $related);
+        }
+
+        Manager::eligibleForProperty($property)
+            ->with('user')
+            ->get()
+            ->pluck('user')
+            ->filter()
+            ->filter(fn (User $managerUser) => $managerPermission === null || $managerUser->hasManagerPermission($managerPermission))
+            ->each(fn (User $managerUser) => $this->notify($managerUser, $eventType, $title, $body, $channels, $related));
     }
 
     /**

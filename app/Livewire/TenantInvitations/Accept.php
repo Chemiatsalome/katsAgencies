@@ -199,13 +199,14 @@ class Accept extends Component
             'resulting_tenancy_id' => $tenancy->id,
         ]);
 
-        app(NotificationService::class)->notify(
-            $this->invitation->invitedBy,
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $this->invitation->house->block->property,
             'tenant_registered',
             'New Tenant Registered',
             "{$tenant->name} completed registration for {$this->invitation->house->block->property->name} — {$this->invitation->house->house_number}.",
             ['in_app'],
             $tenancy,
+            'tenancies.view',
         );
 
         $this->redirectRoute('tenant.dashboard', navigate: true);

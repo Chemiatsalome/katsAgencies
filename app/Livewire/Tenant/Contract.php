@@ -102,13 +102,14 @@ class Contract extends Component
 
         app(ContractService::class)->sign($contract, $this->typedFullName, request()->ip());
 
-        app(NotificationService::class)->notify(
-            $tenancy->house->block->property->landlord,
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $tenancy->house->block->property,
             'contract_signed',
             'Contract Signed',
             "{$tenancy->tenant->name} signed their lease agreement.",
             ['in_app'],
             $tenancy,
+            'tenancies.manage_contracts',
         );
 
         session()->flash('status', 'Contract signed. Thank you.');

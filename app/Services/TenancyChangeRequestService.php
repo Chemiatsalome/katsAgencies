@@ -54,13 +54,14 @@ class TenancyChangeRequestService
             ]);
         }
 
-        app(NotificationService::class)->notify(
-            $tenancy->house->block->property->landlord,
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $tenancy->house->block->property,
             'tenancy_change_request_submitted',
             'Tenant Requested a Tenancy Change',
             $tenancy->tenant->name.' requested a change to '.$this->categoryLabel($category).': '.$requestedChange,
             ['in_app', 'email'],
             $request,
+            'tenancies.view',
         );
 
         return $request;

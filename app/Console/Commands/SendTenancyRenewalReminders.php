@@ -48,13 +48,14 @@ class SendTenancyRenewalReminders extends Command
 
                 $property = $tenancy->house->block->property;
 
-                $notifications->notify(
-                    $property->landlord,
+                $notifications->notifyPropertyStakeholders(
+                    $property,
                     $eventType,
                     'Tenancy Renewal Review Due',
                     "{$tenancy->tenant->name}'s tenancy at {$property->name} — {$tenancy->house->house_number} is due for a renewal review.",
                     ['in_app'],
                     $tenancy,
+                    'tenancies.view',
                 );
 
                 $notifications->notify(

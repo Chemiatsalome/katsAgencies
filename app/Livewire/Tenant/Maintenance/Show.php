@@ -30,11 +30,18 @@ class Show extends Component
         $this->complaint = $complaint;
     }
 
-    private function landlord()
+    /**
+     * A complaint is tied either to a specific house (the normal case) or
+     * directly to a property with no unit (e.g. a common-area issue) — the
+     * same distinction every notify() call here needs resolved correctly
+     * before it can reach notifyPropertyStakeholders(), not just the
+     * landlord this used to resolve on its own.
+     */
+    private function property()
     {
         return $this->complaint->house
-            ? $this->complaint->house->block->property->landlord
-            : $this->complaint->property->landlord;
+            ? $this->complaint->house->block->property
+            : $this->complaint->property;
     }
 
     /**
@@ -60,13 +67,14 @@ class Show extends Component
             'note' => $this->replyNote,
         ]);
 
-        app(NotificationService::class)->notify(
-            $this->landlord(),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $this->property(),
             'complaint_update_posted',
             'New Reply on a Maintenance Request',
             "{$this->complaint->tenant->name} replied on \"{$this->complaint->subject}\": {$this->replyNote}",
             ['in_app'],
             $this->complaint,
+            'complaints.view',
         );
 
         $this->reset('replyNote');
@@ -95,13 +103,14 @@ class Show extends Component
             'note' => 'Tenant confirmed the work was completed. Request closed.',
         ]);
 
-        app(NotificationService::class)->notify(
-            $this->landlord(),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $this->property(),
             'complaint_confirmed_resolved',
             'Tenant Confirmed a Request Resolved',
             "{$this->complaint->tenant->name} confirmed \"{$this->complaint->subject}\" was fixed. The request is now closed.",
             ['in_app'],
             $this->complaint,
+            'complaints.view',
         );
 
         session()->flash('status', 'Thanks for confirming. This request is now closed.');
@@ -147,13 +156,14 @@ class Show extends Component
             'related_complaint_id' => $this->complaint->id,
         ]);
 
-        app(NotificationService::class)->notify(
-            $this->landlord(),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $this->property(),
             'complaint_submitted',
             'Recurring Maintenance Issue Reported',
             "{$this->complaint->tenant->name} reported that \"{$this->complaint->subject}\" has come back.",
             ['in_app', 'email'],
             $followUp,
+            'complaints.view',
         );
 
         $this->redirectRoute('tenant.maintenance.show', $followUp, navigate: true);
@@ -198,13 +208,14 @@ class Show extends Component
             'note' => $this->reopenReason,
         ]);
 
-        app(NotificationService::class)->notify(
-            $this->landlord(),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $this->property(),
             'complaint_reopened',
             'Tenant Says This Is Not Resolved',
             "{$this->complaint->tenant->name} reopened \"{$this->complaint->subject}\": {$this->reopenReason}",
             ['in_app', 'email'],
             $this->complaint,
+            'complaints.view',
         );
 
         $this->cancelReopenForm();

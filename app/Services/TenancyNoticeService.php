@@ -108,13 +108,14 @@ class TenancyNoticeService
 
         $this->logEvent($notice, 'acknowledged', tenantId: $tenantId);
 
-        app(NotificationService::class)->notify(
-            $this->landlordFor($notice),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $notice->tenancy->house->block->property,
             'tenancy_notice_acknowledged',
             'Tenant Acknowledged a Tenancy Notice',
             $notice->tenancy->tenant->name.' acknowledged receipt of their tenancy notice.',
             ['in_app'],
             $notice,
+            'tenancies.view',
         );
     }
 
@@ -183,13 +184,14 @@ class TenancyNoticeService
             'request_extension' => 'Tenant Requested an Agreement Extension',
         };
 
-        app(NotificationService::class)->notify(
-            $this->landlordFor($notice),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $notice->tenancy->house->block->property,
             $eventType,
             $title,
             $notice->tenancy->tenant->name.' responded to their tenancy notice.'.($note ? " \"{$note}\"" : ''),
             ['in_app', 'email'],
             $notice,
+            'tenancies.view',
         );
     }
 

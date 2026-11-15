@@ -37,13 +37,14 @@ class TenancyRenewalService
             'status' => 'pending',
         ]);
 
-        app(NotificationService::class)->notify(
-            $tenancy->house->block->property->landlord,
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $tenancy->house->block->property,
             'tenancy_renewal_requested',
             'Tenant Requested a Tenancy Renewal',
             $tenancy->tenant->name.' would like to renew their tenancy for '.$durationMonths.' month(s).'.($message ? " \"{$message}\"" : ''),
             ['in_app', 'email'],
             $request,
+            'tenancies.view',
         );
 
         return $request;
@@ -129,13 +130,14 @@ class TenancyRenewalService
 
             app(NotificationService::class)->markRelatedRead($request, $request->tenancy->tenant);
 
-            app(NotificationService::class)->notify(
-                $this->landlordFor($request),
+            app(NotificationService::class)->notifyPropertyStakeholders(
+                $request->tenancy->house->block->property,
                 'tenancy_renewal_alternative_responded',
                 'Tenant Declined the Proposed Renewal Terms',
                 $request->tenancy->tenant->name.' declined the alternative renewal terms.',
                 ['in_app'],
                 $request,
+                'tenancies.view',
             );
 
             return;
@@ -151,13 +153,14 @@ class TenancyRenewalService
 
         app(NotificationService::class)->markRelatedRead($request, $request->tenancy->tenant);
 
-        app(NotificationService::class)->notify(
-            $this->landlordFor($request),
+        app(NotificationService::class)->notifyPropertyStakeholders(
+            $request->tenancy->house->block->property,
             'tenancy_renewal_alternative_responded',
             'Tenant Accepted the Proposed Renewal Terms',
             $request->tenancy->tenant->name.' accepted the alternative renewal terms — the agreement has been renewed.',
             ['in_app'],
             $request,
+            'tenancies.view',
         );
     }
 

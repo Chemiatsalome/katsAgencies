@@ -43,13 +43,14 @@ class SendContractExpiryAlerts extends Command
 
                 $property = $tenancy->house->block->property;
 
-                $notifications->notify(
-                    $property->landlord,
+                $notifications->notifyPropertyStakeholders(
+                    $property,
                     $eventType,
                     'Lease Expiring Soon',
                     "{$tenancy->tenant->name}'s lease at {$property->name} — {$tenancy->house->house_number} expires in {$daysRemaining} day(s).",
                     ['in_app'],
-                    $tenancy
+                    $tenancy,
+                    'tenancies.view',
                 );
 
                 $notifications->notify(

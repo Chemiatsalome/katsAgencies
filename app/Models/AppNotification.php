@@ -311,19 +311,26 @@ class AppNotification extends Model
      * request...). Those two were previously queried separately and the
      * landlord-directed half was never surfaced anywhere outside the
      * platform-wide admin view.
+     *
+     * $userIds is deliberately just [$user->id] — NOT [$user->id,
+     * $user->landlordId()] as an earlier version of this scope had it.
+     * landlordId() substitutes the delegating landlord's own id for a
+     * manager, which meant a manager viewing their own bell matched every
+     * notification ever addressed to their landlord directly, with no
+     * property or permission scoping at all — confirmed to include
+     * deposit refunds, disbursements and every other landlord-only
+     * financial notification, and to reach a manager assigned to zero
+     * properties. A manager now only ever sees: notifications about
+     * tenants they're actually scoped to (via accessibleBy() below,
+     * unchanged), and notifications addressed to their own User record —
+     * which NotificationService::notifyPropertyStakeholders() is the one
+     * place that now deliberately creates, per eligible manager, for
+     * exactly the operational events their own permissions justify.
      */
     public function scopeForLandlordContext(Builder $query, User $user): Builder
     {
         $tenantIds = Tenant::accessibleBy($user)->pluck('id');
-
-        // landlordId() alone meant a notification addressed to a manager's
-        // own User record (e.g. "your access changed") matched neither the
-        // landlord's bell (wrong id) nor that manager's own (landlordId()
-        // substitutes the landlord's id even when viewing as the manager)
-        // — created, but genuinely invisible to everyone. $user->id covers
-        // that case; for a landlord it's the same value as landlordId(),
-        // so this is purely additive for them.
-        $userIds = array_unique(array_filter([$user->id, $user->landlordId()]));
+        $userIds = [$user->id];
 
         return $query->where(function (Builder $q) use ($tenantIds, $userIds) {
             $q->where(fn ($q2) => $q2->where('notifiable_type', (new Tenant)->getMorphClass())->whereIn('notifiable_id', $tenantIds))

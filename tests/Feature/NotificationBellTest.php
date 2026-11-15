@@ -131,7 +131,25 @@ class NotificationBellTest extends TestCase
             ->assertSee('You');
     }
 
-    public function test_a_delegated_manager_sees_notifications_addressed_to_their_landlord(): void
+    /**
+     * Superseded by the Manager/Agent/Deposit cross-role audit's follow-on
+     * finding: this test used to assert the opposite — that ANY manager of
+     * this landlord, regardless of property assignment or permission,
+     * sees literally everything ever addressed to the landlord directly
+     * via notify(). That was AppNotification::scopeForLandlordContext()
+     * substituting the manager's own landlordId() into its recipient
+     * match, confirmed (empirically, via a deposit-refund-style
+     * notification) to expose every landlord-only financial notification
+     * to every manager with zero scoping. Removed — a manager's bell now
+     * only shows notifications about tenants they're actually scoped to,
+     * or ones addressed to their own User record specifically. See
+     * NotificationService::notifyPropertyStakeholders() for the
+     * intentional, property-and-permission-scoped replacement mechanism
+     * (covered by ManagerNotificationRoutingTest), which this same
+     * complaint_submitted event now actually uses at its real call site
+     * (Tenant\Maintenance\Create) instead of a bare notify($landlord, ...).
+     */
+    public function test_a_manager_does_not_see_a_notification_addressed_directly_to_their_landlord(): void
     {
         $this->seed();
 
@@ -162,7 +180,7 @@ class NotificationBellTest extends TestCase
 
         Livewire::actingAs($managerUser)
             ->test(\App\Livewire\NotificationBell::class)
-            ->assertSee('New Maintenance Complaint For Manager');
+            ->assertDontSee('New Maintenance Complaint For Manager');
     }
 
     public function test_a_landlord_does_not_see_notifications_addressed_to_another_landlord(): void
