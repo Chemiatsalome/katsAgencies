@@ -136,4 +136,21 @@ class TenantCommunicationAndProfileTest extends TestCase
 
         $this->assertEquals($originalRent, (string) $tenancy->fresh()->monthly_rent);
     }
+
+    /**
+     * F1: the generic account-deletion form this warning used to accompany
+     * has been removed from the shared /profile page for every role,
+     * closing a destructive, business-rule-free self-delete path — so
+     * there is no deletion action left for this warning to precede.
+     */
+    public function test_tenant_no_longer_sees_an_account_deletion_warning_or_form_on_the_shared_profile_page(): void
+    {
+        $this->seed();
+        $user = $this->makeTenantUser();
+
+        $this->actingAs($user)->get('/profile')
+            ->assertOk()
+            ->assertDontSee('only removes your portal login')
+            ->assertDontSeeVolt('profile.delete-user-form');
+    }
 }

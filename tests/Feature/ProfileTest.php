@@ -21,7 +21,7 @@ class ProfileTest extends TestCase
             ->assertOk()
             ->assertSeeVolt('profile.update-profile-information-form')
             ->assertSeeVolt('profile.update-password-form')
-            ->assertSeeVolt('profile.delete-user-form');
+            ->assertDontSeeVolt('profile.delete-user-form');
     }
 
     public function test_profile_information_can_be_updated(): void
@@ -64,38 +64,78 @@ class ProfileTest extends TestCase
         $this->assertNotNull($user->refresh()->email_verified_at);
     }
 
-    public function test_user_can_delete_their_account(): void
+    // --- F1: generic Breeze account self-deletion, closed ------------------------------
+    //
+    // The destructive path used to be reachable by every role through the
+    // shared /profile page (App\Livewire\Profile\Index) with no business-
+    // relationship checks at all — a landlord with properties, or any other
+    // role, could permanently delete their own User with nothing but their
+    // own password, cascading through everything FK-chained beneath it. The
+    // Volt component that held both the UI and the deleteUser() method
+    // (resources/views/livewire/profile/delete-user-form.blade.php) has been
+    // removed entirely, not just unlinked from the page.
+
+    public function test_the_generic_account_deletion_form_is_not_shown_to_any_role_on_the_shared_profile_page(): void
     {
-        $user = User::factory()->create();
+        $this->seed();
 
-        $this->actingAs($user);
+        $landlord = User::role('landlord')->firstOrFail();
 
-        $component = Volt::test('profile.delete-user-form')
-            ->set('password', 'password')
-            ->call('deleteUser');
+        // A bare role-assigned factory user stands in fine for tenant/admin,
+        // but the sidebar this page shares with every other authenticated
+        // view resolves a manager's landlordId() via their real Manager
+        // relationship (see sidebar.blade.php) — a manager with no such row
+        // is not a state the app ever actually puts someone in, so this
+        // builds a real one rather than tripping an unrelated null-safety
+        // gap that has nothing to do with F1.
+        $manager = \App\Models\Manager::create([
+            'landlord_id' => $landlord->id,
+            'name' => 'Profile Test Manager',
+            'phone' => '0712000111',
+            'email' => 'profile-test-manager@example.test',
+            'all_properties' => true,
+            'status' => 'active',
+            'token' => \App\Models\Manager::generateToken(),
+            'expires_at' => now()->addDays(7),
+            'invited_at' => now(),
+            'activated_at' => now(),
+        ]);
+        $managerUser = User::create([
+            'name' => $manager->name,
+            'email' => $manager->email,
+            'password' => bcrypt('password'),
+            'status' => 'active',
+        ]);
+        $managerUser->assignRole('manager');
+        $manager->update(['user_id' => $managerUser->id]);
 
-        $component
-            ->assertHasNoErrors()
-            ->assertRedirect('/');
+        $tenant = User::factory()->create();
+        $tenant->assignRole('tenant');
 
-        $this->assertGuest();
-        $this->assertNull($user->fresh());
+        $admin = User::factory()->create();
+        $admin->assignRole('admin');
+
+        foreach ([$landlord, $managerUser->fresh(), $tenant, $admin] as $user) {
+            $this->actingAs($user)->get('/profile')
+                ->assertOk()
+                ->assertDontSeeVolt('profile.delete-user-form')
+                ->assertDontSee('Delete Account');
+
+            $this->assertDatabaseHas('users', ['id' => $user->id]);
+        }
     }
 
-    public function test_correct_password_must_be_provided_to_delete_account(): void
+    public function test_the_generic_account_deletion_backend_action_no_longer_exists(): void
     {
         $user = User::factory()->create();
 
         $this->actingAs($user);
 
-        $component = Volt::test('profile.delete-user-form')
-            ->set('password', 'wrong-password')
-            ->call('deleteUser');
+        // Not merely hidden from the page — the component (and the
+        // deleteUser() method that lived inside it) is gone, so there is
+        // nothing left to mount or call it on.
+        $this->expectException(\Throwable::class);
 
-        $component
-            ->assertHasErrors('password')
-            ->assertNoRedirect();
-
-        $this->assertNotNull($user->fresh());
+        Volt::test('profile.delete-user-form');
     }
 }
