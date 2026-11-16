@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
@@ -14,6 +15,7 @@ use Spatie\Activitylog\Traits\LogsActivity;
 #[Fillable([
     'landlord_id', 'user_id', 'name', 'phone', 'email', 'all_properties', 'permissions',
     'status', 'token', 'expires_at', 'invited_at', 'activated_at',
+    'suspended_via_landlord_suspension_at',
 ])]
 class Manager extends Model
 {
@@ -27,6 +29,7 @@ class Manager extends Model
             'expires_at' => 'datetime',
             'invited_at' => 'datetime',
             'activated_at' => 'datetime',
+            'suspended_via_landlord_suspension_at' => 'datetime',
         ];
     }
 
@@ -43,6 +46,11 @@ class Manager extends Model
     public function properties(): BelongsToMany
     {
         return $this->belongsToMany(Property::class, 'manager_property');
+    }
+
+    public function reports(): HasMany
+    {
+        return $this->hasMany(ManagerReport::class);
     }
 
     /**
