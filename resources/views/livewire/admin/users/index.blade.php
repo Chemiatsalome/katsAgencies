@@ -31,6 +31,18 @@
                 </form>
             @endif
 
+            @if ($pendingReportUserId)
+                <form wire:submit="submitReport" class="bg-white shadow-sm border border-brand-border rounded-md p-4 space-y-2 max-w-xl">
+                    <p class="text-sm text-charcoal">Reason for reporting this manager to their landlord:</p>
+                    <textarea wire:model="reportReason" rows="2" class="w-full rounded-md border-brand-border text-sm" placeholder="What is the concern?"></textarea>
+                    <x-input-error :messages="$errors->get('reportReason')" class="mt-1" />
+                    <div class="flex gap-3">
+                        <button type="submit" class="text-xs font-medium text-danger hover:underline">Send Report</button>
+                        <button type="button" wire:click="cancelReport" class="text-xs font-medium text-brand-slate hover:underline">Cancel</button>
+                    </div>
+                </form>
+            @endif
+
             <div class="flex flex-wrap items-center gap-3">
                 <input type="text" wire:model.live.debounce.400ms="search" placeholder="Search by name or email…" class="rounded-md border-brand-border text-sm" />
                 <select wire:model.live="roleFilter" class="rounded-md border-brand-border text-sm">
@@ -76,7 +88,10 @@
                                             </select>
                                         @endif
                                     </td>
-                                    <td class="px-5 py-3 text-right">
+                                    <td class="px-5 py-3 text-right space-x-2">
+                                        @if ($user->hasRole('manager'))
+                                            <button wire:click="startReport({{ $user->id }})" class="text-warning hover:underline">Report to Landlord</button>
+                                        @endif
                                         <button wire:click="resetPassword({{ $user->id }})" wire:confirm="Reset this user's password?" class="text-brand-slate hover:text-navy">Reset Password</button>
                                     </td>
                                 </tr>

@@ -196,7 +196,7 @@ class Index extends Component
         $landlordId = Auth::id();
 
         $managers = Manager::where('landlord_id', $landlordId)
-            ->with('properties:id,name')
+            ->with(['properties:id,name', 'reports' => fn ($q) => $q->latest()->with('reportedBy:id,name')])
             ->latest()
             ->get();
 

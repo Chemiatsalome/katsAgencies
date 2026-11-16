@@ -122,6 +122,90 @@ class AdminUserManagementTest extends TestCase
         $this->assertEquals('active', $manager->fresh()->status);
     }
 
+    // --- Phase 4, point C: admin reports a manager to their landlord -------------------
+
+    public function test_an_admin_can_report_a_manager_and_the_landlord_is_notified(): void
+    {
+        $this->seed();
+        $admin = User::role('admin')->firstOrFail();
+        $landlord = User::role('landlord')->firstOrFail();
+
+        $manager = \App\Models\Manager::create([
+            'landlord_id' => $landlord->id, 'name' => 'Report Test Manager',
+            'phone' => '0712300002', 'email' => 'report-test-manager@example.test',
+            'all_properties' => true, 'status' => 'active',
+            'token' => \App\Models\Manager::generateToken(), 'expires_at' => now()->addDays(7),
+            'invited_at' => now(), 'activated_at' => now(),
+        ]);
+        $managerUser = User::create([
+            'name' => $manager->name, 'email' => $manager->email,
+            'password' => bcrypt('password'), 'status' => 'active',
+        ]);
+        $managerUser->assignRole('manager');
+        $manager->update(['user_id' => $managerUser->id]);
+
+        Livewire::actingAs($admin)
+            ->test(UsersIndex::class)
+            ->call('startReport', $managerUser->id)
+            ->set('reportReason', 'Tenant complained about unreturned deposit communication.')
+            ->call('submitReport')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('manager_reports', [
+            'manager_id' => $manager->id,
+            'landlord_id' => $landlord->id,
+            'reported_by' => $admin->id,
+            'reason' => 'Tenant complained about unreturned deposit communication.',
+        ]);
+
+        $this->assertDatabaseHas('app_notifications', [
+            'notifiable_type' => $landlord->getMorphClass(), 'notifiable_id' => $landlord->id,
+            'event_type' => 'manager_reported_by_admin', 'channel' => 'email',
+        ]);
+
+        // Still an active manager — the admin's report is not a suspension.
+        $this->assertEquals('active', $manager->fresh()->status);
+    }
+
+    public function test_reporting_a_manager_whose_landlord_is_suspended_only_notifies_in_app(): void
+    {
+        $this->seed();
+        $admin = User::role('admin')->firstOrFail();
+        $landlord = User::role('landlord')->firstOrFail();
+        $landlord->update(['status' => 'suspended']);
+
+        $manager = \App\Models\Manager::create([
+            'landlord_id' => $landlord->id, 'name' => 'Suspended Landlord Report Manager',
+            'phone' => '0712300003', 'email' => 'suspended-landlord-report-manager@example.test',
+            'all_properties' => true, 'status' => 'inactive',
+            'token' => \App\Models\Manager::generateToken(), 'expires_at' => now()->addDays(7),
+            'invited_at' => now(), 'activated_at' => now(),
+        ]);
+        $managerUser = User::create([
+            'name' => $manager->name, 'email' => $manager->email,
+            'password' => bcrypt('password'), 'status' => 'inactive',
+        ]);
+        $managerUser->assignRole('manager');
+        $manager->update(['user_id' => $managerUser->id]);
+
+        Livewire::actingAs($admin)
+            ->test(UsersIndex::class)
+            ->call('startReport', $managerUser->id)
+            ->set('reportReason', 'Flagged while landlord account is under suspension.')
+            ->call('submitReport')
+            ->assertHasNoErrors();
+
+        $this->assertDatabaseHas('manager_reports', ['manager_id' => $manager->id]);
+        $this->assertDatabaseHas('app_notifications', [
+            'notifiable_type' => $landlord->getMorphClass(), 'notifiable_id' => $landlord->id,
+            'event_type' => 'manager_reported_by_admin', 'channel' => 'in_app',
+        ]);
+        $this->assertDatabaseMissing('app_notifications', [
+            'notifiable_type' => $landlord->getMorphClass(), 'notifiable_id' => $landlord->id,
+            'event_type' => 'manager_reported_by_admin', 'channel' => 'email',
+        ]);
+    }
+
     // --- Phase 3: reason capture for admin-driven account suspension -------------------
 
     public function test_an_admin_cannot_suspend_an_account_without_a_reason(): void

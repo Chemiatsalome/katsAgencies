@@ -66,7 +66,14 @@
                                         };
                                     @endphp
                                     <tr wire:key="manager-{{ $manager->id }}" class="hover:bg-gray-50">
-                                        <td class="px-5 py-3 font-medium text-charcoal">{{ $manager->name }}</td>
+                                        <td class="px-5 py-3 font-medium text-charcoal">
+                                            {{ $manager->name }}
+                                            @if ($manager->reports->isNotEmpty())
+                                                <div class="mt-1 text-xs text-warning" title="An administrator flagged a concern about this manager.">
+                                                    ⚠ Reported by {{ $manager->reports->first()->reportedBy?->name ?? 'an administrator' }} on {{ $manager->reports->first()->created_at->format('d M Y') }}: {{ $manager->reports->first()->reason }}
+                                                </div>
+                                            @endif
+                                        </td>
                                         <td class="px-5 py-3 text-brand-slate">
                                             {{ $manager->email }}
                                             <span class="block text-xs">{{ $manager->phone }}</span>

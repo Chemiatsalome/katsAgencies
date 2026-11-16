@@ -3,7 +3,9 @@
 namespace App\Livewire\Admin\Users;
 
 use App\Mail\LandlordApplicationApprovedPendingVerificationMail;
+use App\Models\ManagerReport;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
@@ -142,6 +144,76 @@ class Index extends Component
         $user->update(['status' => $status]);
 
         session()->flash('status', "{$user->name}'s status updated to ".ucfirst($status).'.');
+    }
+
+    // --- Phase 4, point C: report a manager to their responsible landlord --------------
+
+    public ?int $pendingReportUserId = null;
+
+    public string $reportReason = '';
+
+    public function startReport(int $userId): void
+    {
+        $this->pendingReportUserId = $userId;
+        $this->reportReason = '';
+        $this->resetErrorBag('reportReason');
+    }
+
+    public function cancelReport(): void
+    {
+        $this->reset(['pendingReportUserId', 'reportReason']);
+    }
+
+    /**
+     * The only manager-concern action an admin has — never a suspend/
+     * deactivate action of their own (see startStatusChange()'s guard
+     * above). Creates the audit record and notifies the landlord; the
+     * landlord's own decision, if any, still goes through the existing
+     * Managers\Index::deactivate()/remove() — untouched by this.
+     */
+    public function submitReport(): void
+    {
+        $this->validate(['reportReason' => ['required', 'string', 'min:3', 'max:1000']]);
+
+        $managerUser = User::findOrFail($this->pendingReportUserId);
+        abort_unless($managerUser->hasRole('manager'), 422);
+
+        $manager = $managerUser->manager;
+
+        if (! $manager) {
+            $this->addError('reportReason', 'This account has no active manager delegation to report.');
+
+            return;
+        }
+
+        $landlord = User::find($manager->landlord_id);
+
+        $report = ManagerReport::create([
+            'manager_id' => $manager->id,
+            'landlord_id' => $manager->landlord_id,
+            'reported_by' => auth()->id(),
+            'reason' => trim($this->reportReason),
+        ]);
+
+        // Edge case: the responsible landlord is themselves suspended and
+        // can't currently log in to act on anything. The report is still
+        // recorded — it's a legitimate audit entry regardless — and still
+        // gets an in-app row waiting for them if they're ever reinstated,
+        // but an email about something they can't act on yet would just
+        // be confusing, so that channel alone is skipped while suspended.
+        if ($landlord) {
+            app(NotificationService::class)->notify(
+                $landlord,
+                'manager_reported_by_admin',
+                'An Administrator Reported One of Your Managers',
+                "An administrator reported {$managerUser->name}: {$report->reason}",
+                $landlord->status === 'suspended' ? ['in_app'] : ['in_app', 'email'],
+                $report,
+            );
+        }
+
+        session()->flash('status', "Reported {$managerUser->name} to their landlord.");
+        $this->reset(['pendingReportUserId', 'reportReason']);
     }
 
     public function resetPassword(int $userId): void
