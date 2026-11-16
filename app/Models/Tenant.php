@@ -165,6 +165,22 @@ class Tenant extends Model
         return $this->currentTenancy() ?? $this->mostRecentTenancy();
     }
 
+    /**
+     * Phase 4 (account lifecycle): whether this tenant's currently-occupying
+     * tenancy sits under a landlord an admin has suspended — checked live,
+     * per request, rather than by touching the tenant's own User.status
+     * (see LandlordSuspensionService's docblock for why: one login has no
+     * reliable way to represent "suspended for landlord A, fine for
+     * landlord B"). A tenant with no active tenancy is never restricted by
+     * this — there's no live landlord relationship left to restrict.
+     */
+    public function currentTenancyLandlordIsSuspended(): bool
+    {
+        $tenancy = $this->currentTenancy();
+
+        return $tenancy ? $tenancy->house->block->property->landlord->status === 'suspended' : false;
+    }
+
     public function complaints(): HasMany
     {
         return $this->hasMany(Complaint::class);

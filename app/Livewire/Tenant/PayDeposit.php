@@ -99,6 +99,13 @@ class PayDeposit extends Component
             return;
         }
 
+        // Final account-lifecycle phase: see PayRent::pay()'s identical check.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            $this->addError('phone', "Online payment is unavailable right now because your landlord's Kats Agencies account is suspended. Your tenancy and deposit obligations are unaffected — please contact your landlord directly about how to pay while this platform restriction is in place.");
+
+            return;
+        }
+
         try {
             $landlordId = $tenancy->house->block->property->landlord_id;
             $gateway = app(PaymentGatewayService::class);
@@ -219,6 +226,11 @@ class PayDeposit extends Component
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
 
+        // Final account-lifecycle phase: see PayRent::openOfflineForm()'s identical check.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            return;
+        }
+
         if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
             return;
         }
@@ -258,6 +270,13 @@ class PayDeposit extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        // Final account-lifecycle phase: see PayRent::submitOfflinePayment()'s identical check.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            $this->addError('offline_amount', "This isn't available right now because your landlord's Kats Agencies account is suspended. Your tenancy and deposit obligations are unaffected — please contact your landlord directly about how to pay while this platform restriction is in place.");
+
+            return;
+        }
 
         if ($this->unresolvedTransactionsQuery($tenancy)->exists()) {
             $this->addError('offline_amount', 'You already have a deposit payment attempt that hasn\'t resolved yet. Please wait for it, or ask for help, before submitting another.');

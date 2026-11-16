@@ -2,7 +2,9 @@
 
 namespace App\Livewire\Tenant;
 
+use App\Livewire\Actions\Logout;
 use App\Rules\ValidPhoneNumber;
+use App\Services\AccountClosureService;
 use App\Services\NotificationService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Layout;
@@ -12,6 +14,10 @@ use Livewire\Component;
 class Profile extends Component
 {
     public string $phone = '';
+
+    // --- Phase 4, point E: tenant-initiated account closure ----------------------------
+
+    public array $closureBlockers = [];
 
     public string $email = '';
 
@@ -70,6 +76,28 @@ class Profile extends Component
         }
 
         session()->flash('status', 'Profile updated.');
+    }
+
+    /**
+     * Ending a tenancy and closing a tenant account are deliberately
+     * separate operations — see AccountClosureService's docblock. This
+     * never deletes the Tenant record or any history; it only revokes the
+     * portal login, and only once there is genuinely nothing outstanding
+     * left for that login to be needed for.
+     */
+    public function closeAccount(Logout $logout): void
+    {
+        $tenant = Auth::user()->tenant;
+        abort_if(! $tenant, 404);
+
+        $this->closureBlockers = app(AccountClosureService::class)->closeTenantAccount($tenant);
+
+        if ($this->closureBlockers) {
+            return;
+        }
+
+        $logout();
+        $this->redirect('/', navigate: true);
     }
 
     public function render()

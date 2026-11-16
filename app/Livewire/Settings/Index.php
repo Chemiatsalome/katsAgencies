@@ -2,7 +2,9 @@
 
 namespace App\Livewire\Settings;
 
+use App\Livewire\Actions\Logout;
 use App\Models\LandlordSetting;
+use App\Services\AccountClosureService;
 use App\Services\PaymentGatewayService;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Url;
@@ -14,6 +16,10 @@ class Index extends Component
 {
     #[Url]
     public string $tab = 'payout';
+
+    // --- Phase 4, point F: landlord-initiated account closure --------------------------
+
+    public array $closureBlockers = [];
 
     public string $payout_shortcode_type = 'paybill';
 
@@ -195,6 +201,24 @@ class Index extends Component
         LandlordSetting::set(Auth::id(), 'renewal_review_cycle_years', $data['renewal_review_cycle_years']);
 
         session()->flash('status', 'Tenancy renewal policy saved.');
+    }
+
+    /**
+     * Distinct from suspension (LandlordSuspensionService, admin-driven) —
+     * this is the landlord's own decision, never deletes a property,
+     * tenancy, contract or financial record, and is blocked outright while
+     * any of that is still genuinely active or unresolved.
+     */
+    public function closeAccount(Logout $logout): void
+    {
+        $this->closureBlockers = app(AccountClosureService::class)->closeLandlordAccount(Auth::user());
+
+        if ($this->closureBlockers) {
+            return;
+        }
+
+        $logout();
+        $this->redirect('/', navigate: true);
     }
 
     public function render()

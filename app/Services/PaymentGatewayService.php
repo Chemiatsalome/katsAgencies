@@ -208,6 +208,14 @@ class PaymentGatewayService
      */
     public function initiateStkPush(int $landlordId, string $phone, float $amount, string $accountReference, string $description): array
     {
+        // Phase 4 (account lifecycle): a suspended landlord's rent
+        // collection through Kats is disabled — checked here, the one
+        // place every tenant-initiated STK push actually starts, rather
+        // than in each calling Livewire component.
+        if (User::find($landlordId)?->status === 'suspended') {
+            throw new RuntimeException("Online payment is unavailable right now because your landlord's account is suspended. Please contact your landlord directly about paying rent.");
+        }
+
         $direct = $this->isDirectlyConfigured($landlordId);
 
         if (! $direct && ! $this->isPlatformConfigured()) {

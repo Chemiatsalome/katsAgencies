@@ -9,7 +9,7 @@
             @endif
 
             <div class="flex gap-2 flex-wrap border-b border-brand-border">
-                @foreach (['payout' => 'Payout Destination', 'reminders' => 'Rent Reminders', 'late_fees' => 'Late Fees', 'financial' => 'Financial Start Date', 'contract_letterhead' => 'Contract Letterhead', 'renewals' => 'Tenancy Renewals'] as $value => $label)
+                @foreach (['payout' => 'Payout Destination', 'reminders' => 'Rent Reminders', 'late_fees' => 'Late Fees', 'financial' => 'Financial Start Date', 'contract_letterhead' => 'Contract Letterhead', 'renewals' => 'Tenancy Renewals', 'account' => 'Account'] as $value => $label)
                     <button wire:click="$set('tab', '{{ $value }}')" class="px-3 py-2 text-sm border-b-2 {{ $tab === $value ? 'border-navy text-navy font-medium' : 'border-transparent text-brand-slate hover:text-charcoal' }}">
                         {{ $label }}
                     </button>
@@ -227,6 +227,31 @@
 
                     <x-primary-button type="submit">Save Renewal Policy</x-primary-button>
                 </form>
+            @endif
+
+            @if ($tab === 'account')
+                <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6 space-y-3 max-w-xl">
+                    <h3 class="text-sm font-semibold text-charcoal">Close My Account</h3>
+                    <p class="text-xs text-brand-slate">
+                        This closes your Kats Agencies login only — distinct from an administrator suspending your
+                        account. It never deletes a property, tenancy, contract or financial record, and is blocked
+                        while any of that is still active or unresolved.
+                    </p>
+
+                    @if ($closureBlockers)
+                        <ul class="text-xs text-danger list-disc pl-4 space-y-1">
+                            @foreach ($closureBlockers as $blocker)
+                                <li>{{ $blocker }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+
+                    <button
+                        wire:click="closeAccount"
+                        wire:confirm="Close your account? You will be logged out of Kats Agencies."
+                        class="text-danger hover:underline text-xs font-medium"
+                    >Close My Account</button>
+                </div>
             @endif
         </div>
     </div>

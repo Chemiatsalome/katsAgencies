@@ -136,6 +136,16 @@ class PayRent extends Component
             return;
         }
 
+        // PaymentGatewayService::initiateStkPush() already refuses this
+        // below, but checking here first avoids an unnecessary gateway
+        // round-trip and keeps the message specific to this page rather
+        // than a generic caught RuntimeException.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            $this->addError('phone', "Online payment is unavailable right now because your landlord's Kats Agencies account is suspended. Your tenancy and rent obligations are unaffected — please contact your landlord directly about how to pay while this platform restriction is in place.");
+
+            return;
+        }
+
         try {
             $landlordId = $tenancy->house->block->property->landlord_id;
             $gateway = app(PaymentGatewayService::class);
@@ -282,6 +292,14 @@ class PayRent extends Component
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
 
+        // Final account-lifecycle phase: an offline claim is a new payment
+        // obligation on a suspended landlord's books exactly as much as an
+        // STK push is — PaymentGatewayService's own guard only ever sees
+        // the online path, so this one needs its own.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            return;
+        }
+
         // Phase 4 audit, Finding 4: an offline claim is just as much a
         // payment attempt as an STK push — it must not be usable to bypass
         // the same hard retry block.
@@ -323,6 +341,14 @@ class PayRent extends Component
         $tenant = Auth::user()->tenant;
         $tenancy = $tenant?->currentTenancy();
         abort_if(! $tenancy, 404);
+
+        // Re-checked here too, not only in openOfflineForm() — the view
+        // toggle alone is never enforcement on its own.
+        if ($tenant->currentTenancyLandlordIsSuspended()) {
+            $this->addError('offline_amount', "This isn't available right now because your landlord's Kats Agencies account is suspended. Your tenancy and rent obligations are unaffected — please contact your landlord directly about how to pay while this platform restriction is in place.");
+
+            return;
+        }
 
         // Re-checked here too — never trust that the form could only have
         // been opened while clear (openOfflineForm() already guards this,

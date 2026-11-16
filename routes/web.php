@@ -248,6 +248,13 @@ Route::middleware(['auth', 'role:tenant'])->prefix('tenant')->name('tenant.')->g
     Route::get('announcements', \App\Livewire\Tenant\Announcements\Index::class)->name('announcements.index');
 
     Route::get('profile', \App\Livewire\Tenant\Profile::class)->name('profile');
+
+    // Reachable even while EnsureTenantLandlordIsActive is otherwise
+    // redirecting every other tenant page — see that middleware's
+    // docblock. Deliberately not inside the same auth/role check as a
+    // special case: it's the identical ['auth', 'role:tenant'] this whole
+    // group already uses.
+    Route::get('account-restricted', \App\Livewire\Tenant\AccountRestricted::class)->name('account-restricted');
 });
 
 require __DIR__.'/auth.php';

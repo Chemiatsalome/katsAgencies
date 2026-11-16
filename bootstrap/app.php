@@ -50,6 +50,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->web(append: [
             \App\Http\Middleware\EnsureAccountIsActive::class,
+            \App\Http\Middleware\EnsureTenantLandlordIsActive::class,
         ]);
 
         // Safaricom posts here with no CSRF token or session of ours.

@@ -9,6 +9,7 @@ use App\Models\AppNotification;
 use App\Models\Manager;
 use App\Models\MaintenanceTask;
 use App\Models\SupportTicket;
+use App\Models\Tenancy;
 use App\Models\User;
 use App\Services\DisbursementService;
 use App\Services\SupportTicketService;
@@ -461,5 +462,27 @@ class ManagerLifecycleAndEscalationTest extends TestCase
             'deposit_required' => $house->deposit_amount,
             'rent_due_day' => 1,
         ]);
+    }
+
+    /** Phase 4 test requirement #12: deactivating one manager must not touch tenants or other managers. */
+    public function test_deactivating_one_manager_does_not_affect_tenants_or_other_managers(): void
+    {
+        $this->seed();
+        $landlord = User::role('landlord')->firstOrFail();
+        $deactivatedManager = $this->makeManager($landlord);
+        $unrelatedManager = $this->makeManager($landlord);
+        $tenancy = Tenancy::whereHas('house.block.property', fn ($q) => $q->where('landlord_id', $landlord->id))->active()->firstOrFail();
+        $tenantUser = $tenancy->tenant->user ?? tap(User::factory()->create(['status' => 'active']), function ($u) use ($tenancy) {
+            $u->assignRole('tenant');
+            $tenancy->tenant->update(['user_id' => $u->id]);
+        });
+
+        Livewire::actingAs($landlord)->test(ManagersIndex::class)
+            ->call('deactivate', $deactivatedManager->manager, 'Isolation test.');
+
+        $this->assertEquals('inactive', $deactivatedManager->fresh()->status);
+        $this->assertEquals('active', $unrelatedManager->fresh()->status);
+        $this->assertEquals('active', $tenantUser->fresh()->status);
+        $this->assertEquals('active', $landlord->fresh()->status);
     }
 }

@@ -57,6 +57,28 @@
                         </p>
                     </div>
                 @endif
+
+                <div class="bg-white shadow-sm rounded-lg border border-brand-border p-6">
+                    <h3 class="text-sm font-semibold text-charcoal mb-2">Close My Account</h3>
+                    <p class="text-xs text-brand-slate mb-3">
+                        This closes your portal login only — it does not end your tenancy, and your tenancy, payment,
+                        deposit and contract history are kept exactly as they are.
+                    </p>
+
+                    @if ($closureBlockers)
+                        <ul class="text-xs text-danger list-disc pl-4 mb-3 space-y-1">
+                            @foreach ($closureBlockers as $blocker)
+                                <li>{{ $blocker }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+
+                    <button
+                        wire:click="closeAccount"
+                        wire:confirm="Close your account? You will be logged out and will need your landlord to re-invite you for portal access again."
+                        class="text-danger hover:underline text-xs font-medium"
+                    >Close My Account</button>
+                </div>
             </div>
         </div>
     </div>
