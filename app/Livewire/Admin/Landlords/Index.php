@@ -5,6 +5,7 @@ namespace App\Livewire\Admin\Landlords;
 use App\Mail\LandlordApplicationApprovedPendingVerificationMail;
 use App\Models\Setting;
 use App\Models\User;
+use App\Services\LandlordSuspensionService;
 use App\Services\NotificationService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -112,12 +113,28 @@ class Index extends Component
         // found out reactively, at their next forced logout/login attempt
         // (see EnsureAccountIsActive), with no explanation of why.
         if ($previousStatus !== $status) {
-            $contact = Setting::get('org_contact_email');
-            $contactLine = $contact ? " If you believe this is a mistake, contact {$contact}." : '';
+            // Phase 4: the manager/tenant suspension cascade, strictly on a
+            // genuine transition — never re-run for a no-op re-save of the
+            // same status (see test_re_saving_the_same_status_...), and
+            // reinstate() only runs when this specific suspension is what's
+            // actually ending, not e.g. an 'inactive'→'active' approval.
+            if ($status === 'suspended') {
+                app(LandlordSuspensionService::class)->suspend($user, trim($reason));
+            } elseif ($status === 'active' && $previousStatus === 'suspended') {
+                app(LandlordSuspensionService::class)->reinstate($user);
+            }
 
+            // The platform's own configured administrator contact — see
+            // LandlordSuspensionService::suspend()'s identical comment.
+            $contact = Setting::get('org_contact_email');
+            $contactLine = $contact ? " For questions about this, contact Kats Agencies administration at {$contact}." : '';
+
+            // Final account-lifecycle phase, Part B1: the actual reason the
+            // admin gave, never generic wording when one exists — 'active'
+            // has no reason to report (reactivating never requires one).
             $message = match ($status) {
-                'suspended' => "Your Kats Agencies account has been suspended by an administrator.{$contactLine}",
-                'inactive' => "Your Kats Agencies account has been deactivated by an administrator.{$contactLine}",
+                'suspended' => "Your Kats Agencies account has been suspended by Kats Agencies administration. Reason: {$reason}.{$contactLine}",
+                'inactive' => "Your Kats Agencies account has been deactivated by Kats Agencies administration. Reason: {$reason}.{$contactLine}",
                 'active' => 'Your Kats Agencies account is active again.',
                 default => 'Your Kats Agencies account status has changed.',
             };
